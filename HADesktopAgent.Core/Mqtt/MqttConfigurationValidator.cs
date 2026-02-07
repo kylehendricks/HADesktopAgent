@@ -29,6 +29,12 @@ namespace HADesktopAgent.Core.Mqtt
                 errors.Add("MQTT Status topic cannot be empty or whitespace");
             }
 
+            // Validate DiscoveryPrefix is not just whitespace
+            if (string.IsNullOrWhiteSpace(options.DiscoveryPrefix))
+            {
+                errors.Add("MQTT Discovery prefix cannot be empty or whitespace");
+            }
+
             return errors.Any()
                 ? ValidateOptionsResult.Fail(errors)
                 : ValidateOptionsResult.Success;

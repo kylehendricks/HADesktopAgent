@@ -40,7 +40,7 @@ namespace HADesktopAgent.Core.Mqtt
 
             if (entity is IHaCommandableEntity commandableEntity)
             {
-                var commandTopic = commandableEntity.GetCommandTopic(_appPrefix);
+                var commandTopic = commandableEntity.GetCommandTopic(_appPrefix, _deviceId);
                 if (_topicToCommandableEntities.ContainsKey(commandTopic))
                 {
                     throw new InvalidOperationException($"Command Topic '{commandTopic}' already subscribed to.");
@@ -65,6 +65,35 @@ namespace HADesktopAgent.Core.Mqtt
             }
         }
 
+        public async Task UnregisterEntity(IHaEntity entity)
+        {
+            if (!_entities.Remove(entity))
+                return;
+
+            // Publish empty config to remove from HA discovery
+            try
+            {
+                await _mqttManager.PublishAsync(entity.GetConfigTopic(_haPrefix, _deviceId), "", true);
+            }
+            catch (Exception e)
+            {
+                _logger.LogWarning(e, "Failed to publish empty config for '{Name}'", entity.Name);
+            }
+
+            if (entity is IHaCommandableEntity commandableEntity)
+            {
+                var commandTopic = commandableEntity.GetCommandTopic(_appPrefix, _deviceId);
+                await Unsubscribe(commandTopic);
+            }
+
+            if (entity is IHaStatefulEntity statefulEntity)
+            {
+                statefulEntity.StateUpdated -= HandleEntityStateUpdated;
+            }
+
+            entity.ConfigUpdated -= HandleEntityConfigUpdated;
+        }
+
         private async Task Unsubscribe(string topic)
         {
             _topicToCommandableEntities.Remove(topic);
@@ -76,7 +105,7 @@ namespace HADesktopAgent.Core.Mqtt
             try
             {
                 var config = entity.GetConfig(_appPrefix, _mqttManager.StatusTopic, _deviceName, _deviceId);
-                await _mqttManager.PublishAsync(entity.GetConfigTopic(_haPrefix), config.ToJson(), true);
+                await _mqttManager.PublishAsync(entity.GetConfigTopic(_haPrefix, _deviceId), config.ToJson(), true);
             }
             catch (Exception e)
             {
@@ -106,7 +135,7 @@ namespace HADesktopAgent.Core.Mqtt
         {
             try
             {
-                await _mqttManager.PublishAsync(entity.GetStateTopic(_appPrefix), entity.State ?? "", true);
+                await _mqttManager.PublishAsync(entity.GetStateTopic(_appPrefix, _deviceId), entity.State ?? "", true);
             }
             catch (Exception e)
             {
@@ -168,7 +197,7 @@ namespace HADesktopAgent.Core.Mqtt
             {
                 if (entity is IHaCommandableEntity commandableEntity)
                 {
-                    await Unsubscribe(commandableEntity.GetCommandTopic(_appPrefix));
+                    await Unsubscribe(commandableEntity.GetCommandTopic(_appPrefix, _deviceId));
                 }
                 if (entity is IHaStatefulEntity statefulEntity)
                 {

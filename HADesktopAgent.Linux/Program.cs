@@ -1,10 +1,18 @@
+using HADesktopAgent.Linux.Audio;
+using HADesktopAgent.Linux.Display;
 using HADesktopAgent.Linux.PowerState;
+using HADesktopAgent.Linux.Sleep;
 using Microsoft.Extensions.Logging;
 using HADesktopAgent.Core;
+using HADesktopAgent.Core.Audio;
+using HADesktopAgent.Core.Audio.Entity;
+using HADesktopAgent.Core.Display;
 using HADesktopAgent.Core.Mqtt;
 using HADesktopAgent.Core.PowerState;
 using HADesktopAgent.Core.Process;
 using HADesktopAgent.Core.Process.Entity;
+using HADesktopAgent.Core.Sleep;
+using HADesktopAgent.Core.Sleep.Entity;
 using Microsoft.Extensions.Options;
 using Serilog;
 using System.Text.Json;
@@ -75,14 +83,19 @@ builder.Services.AddLogging(loggingBuilder =>
     loggingBuilder.AddSerilog(Log.Logger, dispose: true);
 });
 
-builder.Services.AddSingleton<IPowerState>(new NoOpPowerState());
+builder.Services.AddSingleton<IPowerState, LogindPowerState>();
+builder.Services.AddSingleton<IDisplayWatcher, KScreenDisplayWatcher>();
+builder.Services.AddSingleton<IMonitorSwitcher, KScreenMonitorSwitcher>();
+builder.Services.AddSingleton<IAudioManager, PulseAudioManager>();
+builder.Services.AddSingleton<ISleepControl>(new SystemdSleepControl());
 builder.Services.AddSingleton<MqttManager>();
 builder.Services.AddSingleton(sp =>
 {
     var logger = sp.GetRequiredService<ILogger<MqttHaManager>>();
     var mqttManager = sp.GetRequiredService<MqttManager>();
     var agentConfig = sp.GetRequiredService<IOptions<AgentConfiguration>>().Value;
-    return new MqttHaManager(logger, mqttManager, "homeassistant", "ha_desktop_agent", agentConfig.DeviceId, agentConfig.DeviceName);
+    var mqttConfig = sp.GetRequiredService<IOptions<MqttConfiguration>>().Value;
+    return new MqttHaManager(logger, mqttManager, mqttConfig.DiscoveryPrefix, "ha_desktop_agent", agentConfig.DeviceId, agentConfig.DeviceName);
 });
 
 var host = builder.Build();
@@ -91,11 +104,31 @@ try
 {
     Log.Information("HA Desktop Agent starting...");
 
-    // Register process switch entities
     var mqttHaManager = host.Services.GetRequiredService<MqttHaManager>();
     var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
+    var displayWatcher = host.Services.GetRequiredService<IDisplayWatcher>();
+    var monitorSwitcher = host.Services.GetRequiredService<IMonitorSwitcher>();
+    var audioManager = host.Services.GetRequiredService<IAudioManager>();
+    var sleepControl = host.Services.GetRequiredService<ISleepControl>();
     var processSwitchConfig = host.Services.GetRequiredService<IOptions<List<ProcessSwitchConfiguration>>>();
 
+    // Register per-monitor switch entities
+    var monitorSwitchManager = new MonitorSwitchManager(
+        loggerFactory.CreateLogger<MonitorSwitchManager>(),
+        loggerFactory,
+        displayWatcher,
+        monitorSwitcher,
+        mqttHaManager);
+
+    // Register audio select entity
+    var audioSelect = new AudioSelect(loggerFactory.CreateLogger<AudioSelect>(), audioManager);
+    await mqttHaManager.RegisterEntity(audioSelect);
+
+    // Register sleep button entity
+    var sleepButton = new SleepButton(sleepControl);
+    await mqttHaManager.RegisterEntity(sleepButton);
+
+    // Register process switch entities
     foreach (var config in processSwitchConfig.Value)
     {
         var processSwitch = new ProcessSwitch(

@@ -2,6 +2,6 @@ namespace HADesktopAgent.Core.Display
 {
     public interface IMonitorSwitcher
     {
-        bool SwitchToMonitor(string monitorName);
+        bool SetMonitorEnabled(string monitorName, bool enabled);
     }
 }

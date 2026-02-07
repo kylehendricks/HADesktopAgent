@@ -17,7 +17,7 @@ namespace HADesktopAgent.Core.Entity
             }
 
             SetProperty(type, config, "Name", entity.PrettyName);
-            SetProperty(type, config, "UniqueId", entity.UniqueId);
+            SetProperty(type, config, "UniqueId", $"{deviceId}_{entity.UniqueId}");
             SetProperty(type, config, "Icon", entity.Icon);
             SetProperty(type, config, "AvailabilityTopic", availabilityTopic);
             SetProperty(type, config, "Device", new MqttDiscoveryDevice
@@ -28,12 +28,12 @@ namespace HADesktopAgent.Core.Entity
 
             if (entity is IHaStatefulEntity statefulEntity)
             {
-                SetProperty(type, config, "StateTopic", statefulEntity.GetStateTopic(appPrefix));
+                SetProperty(type, config, "StateTopic", statefulEntity.GetStateTopic(appPrefix, deviceId));
                 SetProperty(type, config, "Optimistic", statefulEntity.Optimistic);
             }
             if (entity is IHaCommandableEntity commandableEntity)
             {
-                SetProperty(type, config, "CommandTopic", commandableEntity.GetCommandTopic(appPrefix));
+                SetProperty(type, config, "CommandTopic", commandableEntity.GetCommandTopic(appPrefix, deviceId));
             }
             if (entity is IHaSelectableEntity selectableEntity)
             {

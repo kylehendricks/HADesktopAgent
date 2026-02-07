@@ -94,7 +94,8 @@ builder.Services.AddSingleton(sp =>
     var logger = sp.GetRequiredService<ILogger<MqttHaManager>>();
     var mqttManager = sp.GetRequiredService<MqttManager>();
     var agentConfig = sp.GetRequiredService<IOptions<AgentConfiguration>>().Value;
-    return new MqttHaManager(logger, mqttManager, "homeassistant", "ha_desktop_agent", agentConfig.DeviceId, agentConfig.DeviceName);
+    var mqttConfig = sp.GetRequiredService<IOptions<MqttConfiguration>>().Value;
+    return new MqttHaManager(logger, mqttManager, mqttConfig.DiscoveryPrefix, "ha_desktop_agent", agentConfig.DeviceId, agentConfig.DeviceName);
 });
 
 var host = builder.Build();

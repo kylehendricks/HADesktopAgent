@@ -1,7 +1,6 @@
 using HADesktopAgent.Core.Audio;
 using HADesktopAgent.Core.Audio.Entity;
 using HADesktopAgent.Core.Display;
-using HADesktopAgent.Core.Display.Entity;
 using HADesktopAgent.Core.Mqtt;
 using HADesktopAgent.Core.Process;
 using HADesktopAgent.Core.Process.Entity;
@@ -17,7 +16,7 @@ namespace HADesktopAgent.Windows
         private readonly IHost _host;
 
         // Entity references for state communication
-        private PrimaryMonitorSelect? _monitorSelect;
+        private MonitorSwitchManager? _monitorSwitchManager;
         private AudioSelect? _audioSelect;
         private List<ProcessSwitch> _processSwitches = new();
         private SleepButton? _sleepButton;
@@ -52,9 +51,13 @@ namespace HADesktopAgent.Windows
             var loggerFactory = _host.Services.GetRequiredService<ILoggerFactory>();
             var processSwitchConfig = _host.Services.GetRequiredService<IOptions<List<ProcessSwitchConfiguration>>>();
 
-            // Create and register entities
-            _monitorSelect = new PrimaryMonitorSelect(displayWatcher, monitorSwitcher);
-            await mqttHaManager.RegisterEntity(_monitorSelect);
+            // Create per-monitor switch entities
+            _monitorSwitchManager = new MonitorSwitchManager(
+                loggerFactory.CreateLogger<MonitorSwitchManager>(),
+                loggerFactory,
+                displayWatcher,
+                monitorSwitcher,
+                mqttHaManager);
 
             _audioSelect = new AudioSelect(loggerFactory.CreateLogger<AudioSelect>(), audioManager);
             await mqttHaManager.RegisterEntity(_audioSelect);

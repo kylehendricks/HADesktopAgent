@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace HADesktopAgent.Core.Process
 {
@@ -64,12 +65,24 @@ namespace HADesktopAgent.Core.Process
                 return true;
             }
 
-            // Kill all instances
             foreach (var process in processes)
             {
                 try
                 {
-                    process.Kill();
+                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                    {
+                        // Send SIGTERM for graceful shutdown
+                        System.Diagnostics.Process.Start("kill", process.Id.ToString());
+                        if (!process.WaitForExit(5000))
+                        {
+                            // Escalate to SIGKILL if still alive
+                            process.Kill();
+                        }
+                    }
+                    else
+                    {
+                        process.Kill();
+                    }
                     process.WaitForExit();
                 }
                 catch

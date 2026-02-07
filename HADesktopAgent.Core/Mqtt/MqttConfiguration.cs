@@ -13,5 +13,8 @@ namespace HADesktopAgent.Core.Mqtt
 
         [Required(ErrorMessage = "MQTT Status topic is required")]
         public string StatusTopic { get; set; } = "ha_desktop_agent/status";
+
+        [Required(ErrorMessage = "MQTT Discovery prefix is required")]
+        public string DiscoveryPrefix { get; set; } = "homeassistant";
     }
 }

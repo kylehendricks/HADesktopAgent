@@ -11,6 +11,6 @@ namespace HADesktopAgent.Core.Entity
         public string? State { get; }
 
         event StateUpdatedHandler? StateUpdated;
-        string GetStateTopic(string appPrefix) => $"{appPrefix}/{Name}/state";
+        string GetStateTopic(string appPrefix, string deviceId) => $"{appPrefix}/{deviceId}/{Name}/state";
     }
 }
