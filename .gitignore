@@ -127,3 +127,6 @@ obj/PlaceholderDependency/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Claude
+.claude
