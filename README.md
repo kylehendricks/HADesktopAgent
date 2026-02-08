@@ -5,6 +5,7 @@ A cross-platform desktop agent that integrates with [Home Assistant](https://www
 ## Features
 
 - **Display Switches** — Individual on/off switches for each connected monitor. Monitors are discovered dynamically — hot-plugging a display creates a new switch in Home Assistant automatically.
+- **Display Configuration** — An MQTT command topic that accepts a JSON list of monitor names to enable, disabling everything else in a single atomic operation. Useful for switching display presets without toggling monitors one at a time.
 - **Audio Device Select** — A select entity listing all available audio output devices. Changing the selection switches the system default audio output.
 - **Process Switches** — User-configurable switches that launch and stop applications. Define them in `config.json` with a path, optional arguments, and an icon.
 - **Sleep Button** — A button entity that triggers system sleep/suspend.
@@ -131,3 +132,18 @@ The agent uses [MQTT Discovery](https://www.home-assistant.io/integrations/mqtt/
 1. The [MQTT integration](https://www.home-assistant.io/integrations/mqtt/) is configured in Home Assistant
 2. The agent's `Mqtt.Host` points to the same broker
 3. The `Mqtt.DiscoveryPrefix` matches Home Assistant's discovery prefix (both default to `homeassistant`)
+
+## Display Configuration
+
+In addition to the per-monitor switches, the agent listens on `ha_desktop_agent/{device_id}/display_config/command` for an atomic display configuration payload. Publish a JSON array of monitor names to enable — all unlisted monitors are disabled in one shot.
+
+```yaml
+# Example: HA script to switch to a single gaming monitor
+script:
+  gaming_mode:
+    sequence:
+      - service: mqtt.publish
+        data:
+          topic: ha_desktop_agent/my_desktop/display_config/command
+          payload: '["Odyssey G91SD"]'
+```

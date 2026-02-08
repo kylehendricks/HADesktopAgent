@@ -13,6 +13,58 @@ namespace HADesktopAgent.Linux.Display
             _logger = logger;
         }
 
+        public bool ApplyConfiguration(ISet<string> enabledMonitors)
+        {
+            try
+            {
+                var edidMap = DrmEdidHelper.GetConnectorToFriendlyNameMap(_logger);
+
+                var directives = new List<string>();
+                foreach (var (connector, friendlyName) in edidMap)
+                {
+                    var action = enabledMonitors.Contains(friendlyName) ? "enable" : "disable";
+                    directives.Add($"output.{connector}.{action}");
+                }
+
+                var arguments = string.Join(" ", directives);
+                _logger.LogInformation("Applying display configuration: kscreen-doctor {Args}", arguments);
+
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "kscreen-doctor",
+                    Arguments = arguments,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = Process.Start(startInfo);
+                if (process == null)
+                {
+                    _logger.LogError("Failed to start kscreen-doctor process");
+                    return false;
+                }
+
+                process.WaitForExit(TimeSpan.FromSeconds(10));
+
+                if (process.ExitCode != 0)
+                {
+                    var stderr = process.StandardError.ReadToEnd();
+                    _logger.LogError("kscreen-doctor failed with exit code {ExitCode}: {Stderr}",
+                        process.ExitCode, stderr);
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to apply display configuration");
+                return false;
+            }
+        }
+
         public bool SetMonitorEnabled(string monitorName, bool enabled)
         {
             try

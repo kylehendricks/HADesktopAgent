@@ -4,20 +4,22 @@ namespace HADesktopAgent.Windows.Display
 {
     public class WindowsMonitorSwitcher : IMonitorSwitcher
     {
+        public bool ApplyConfiguration(ISet<string> enabledMonitors)
+        {
+            return MonitorSwitcher.ApplyConfiguration(enabledMonitors);
+        }
+
         public bool SetMonitorEnabled(string monitorName, bool enabled)
         {
+            var activeNames = new HashSet<string>(
+                MonitorSwitcher.GetMonitors().Where(m => m.IsActive).Select(m => m.Name));
+
             if (enabled)
-            {
-                var monitor = MonitorSwitcher.GetMonitors().Find(m => m.Name == monitorName);
-                if (monitor == null)
-                    return false;
+                activeNames.Add(monitorName);
+            else
+                activeNames.Remove(monitorName);
 
-                return MonitorSwitcher.SwitchToMonitor(monitor);
-            }
-
-            // Disabling individual monitors is not yet supported on Windows
-            System.Diagnostics.Debug.WriteLine($"Disabling monitor '{monitorName}' is not supported on Windows");
-            return false;
+            return MonitorSwitcher.ApplyConfiguration(activeNames);
         }
     }
 }

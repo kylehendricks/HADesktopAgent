@@ -7,6 +7,7 @@ using HADesktopAgent.Core;
 using HADesktopAgent.Core.Audio;
 using HADesktopAgent.Core.Audio.Entity;
 using HADesktopAgent.Core.Display;
+using HADesktopAgent.Core.Display.Entity;
 using HADesktopAgent.Core.Mqtt;
 using HADesktopAgent.Core.PowerState;
 using HADesktopAgent.Core.Process;
@@ -119,6 +120,13 @@ try
         displayWatcher,
         monitorSwitcher,
         mqttHaManager);
+
+    // Register display configuration API
+    var displayConfigApi = new DisplayConfigurationApi(
+        loggerFactory.CreateLogger<DisplayConfigurationApi>(),
+        displayWatcher,
+        monitorSwitcher);
+    await mqttHaManager.RegisterApi(displayConfigApi);
 
     // Register audio select entity
     var audioSelect = new AudioSelect(loggerFactory.CreateLogger<AudioSelect>(), audioManager);

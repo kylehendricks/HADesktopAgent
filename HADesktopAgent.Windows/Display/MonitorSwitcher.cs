@@ -17,8 +17,6 @@ namespace HADesktopAgent.Windows.Display
             public required string Name { get; init; }
             public required bool IsActive { get; init; }
             public required string DevicePath { get; init; }
-            internal LUID AdapterId { get; init; }
-            internal uint TargetId { get; init; }
         }
 
         /// <summary>
@@ -70,8 +68,6 @@ namespace HADesktopAgent.Windows.Display
                 {
                     Name = deviceName.monitorFriendlyDeviceName,
                     DevicePath = deviceName.monitorDevicePath,
-                    AdapterId = path.targetInfo.adapterId,
-                    TargetId = path.targetInfo.id,
                     IsActive = (path.flags & DISPLAYCONFIG_PATH_ACTIVE) != 0
                 });
             }
@@ -80,9 +76,9 @@ namespace HADesktopAgent.Windows.Display
         }
 
         /// <summary>
-        /// Switches to the specified monitor (disables all others)
+        /// Applies a display configuration atomically — enables the named monitors, disables everything else.
         /// </summary>
-        public static bool SwitchToMonitor(Monitor monitor)
+        public static bool ApplyConfiguration(ISet<string> enabledMonitors)
         {
             if (GetDisplayConfigBufferSizes(QDC_ALL_PATHS, out uint pathCount, out uint modeCount) != 0)
                 return false;
@@ -93,65 +89,102 @@ namespace HADesktopAgent.Windows.Display
             if (QueryDisplayConfig(QDC_ALL_PATHS, ref pathCount, paths, ref modeCount, modes, nint.Zero) != 0)
                 return false;
 
-            // Find target path(s)
-            var targetPaths = new List<DISPLAYCONFIG_PATH_INFO>();
+            // Resolve friendly name for each path and pick the best path per monitor
+            var bestPathByDevice = new Dictionary<string, (DISPLAYCONFIG_PATH_INFO path, string name)>();
+
             for (int i = 0; i < pathCount; i++)
             {
                 var path = paths[i];
-                if (path.targetInfo.adapterId.LowPart == monitor.AdapterId.LowPart &&
-                    path.targetInfo.adapterId.HighPart == monitor.AdapterId.HighPart &&
-                    path.targetInfo.id == monitor.TargetId)
+                if (path.targetInfo.targetAvailable == 0)
+                    continue;
+
+                var deviceName = new DISPLAYCONFIG_TARGET_DEVICE_NAME
                 {
-                    targetPaths.Add(path);
+                    header = new DISPLAYCONFIG_DEVICE_INFO_HEADER
+                    {
+                        type = 2,
+                        size = (uint)Marshal.SizeOf(typeof(DISPLAYCONFIG_TARGET_DEVICE_NAME)),
+                        adapterId = path.targetInfo.adapterId,
+                        id = path.targetInfo.id
+                    }
+                };
+
+                if (DisplayConfigGetDeviceInfo(ref deviceName) != 0 ||
+                    string.IsNullOrEmpty(deviceName.monitorFriendlyDeviceName))
+                    continue;
+
+                var devPath = deviceName.monitorDevicePath;
+                var friendlyName = deviceName.monitorFriendlyDeviceName;
+
+                if (!enabledMonitors.Contains(friendlyName))
+                    continue;
+
+                // Prefer an already-active path for this device, otherwise take the first
+                if (!bestPathByDevice.ContainsKey(devPath))
+                {
+                    bestPathByDevice[devPath] = (path, friendlyName);
+                }
+                else if ((path.flags & DISPLAYCONFIG_PATH_ACTIVE) != 0)
+                {
+                    bestPathByDevice[devPath] = (path, friendlyName);
                 }
             }
 
-            if (targetPaths.Count == 0)
+            if (bestPathByDevice.Count == 0)
                 return false;
 
-            // Use active path or first available
-            var activePath = targetPaths.FirstOrDefault(p => (p.flags & DISPLAYCONFIG_PATH_ACTIVE) != 0);
-            var targetPath = activePath.flags != 0 ? activePath : targetPaths[0];
-
-            targetPath.flags = DISPLAYCONFIG_PATH_ACTIVE;
-            targetPath.sourceInfo.statusFlags = 0x00000001;
-            targetPath.targetInfo.statusFlags = 0x00000001;
-
-            // Build mode info array
+            // Build new path and mode arrays
+            var newPaths = new List<DISPLAYCONFIG_PATH_INFO>();
             var newModes = new List<DISPLAYCONFIG_MODE_INFO>();
             var addedModeIndices = new HashSet<uint>();
-            uint newModeIndex = 0;
 
-            var sourceModeIdx = targetPath.sourceInfo.modeInfoIdx;
-            var targetModeIdx = targetPath.targetInfo.modeInfoIdx;
+            foreach (var (_, (path, _)) in bestPathByDevice)
+            {
+                var p = path;
+                p.flags = DISPLAYCONFIG_PATH_ACTIVE;
+                p.sourceInfo.statusFlags = 0x00000001;
+                p.targetInfo.statusFlags = 0x00000001;
 
-            if (sourceModeIdx != 0xFFFFFFFF && sourceModeIdx < modeCount && !addedModeIndices.Contains(sourceModeIdx))
-            {
-                newModes.Add(modes[sourceModeIdx]);
-                targetPath.sourceInfo.modeInfoIdx = newModeIndex++;
-                addedModeIndices.Add(sourceModeIdx);
-            }
-            else
-            {
-                targetPath.sourceInfo.modeInfoIdx = 0xFFFFFFFF;
-            }
+                var sourceModeIdx = p.sourceInfo.modeInfoIdx;
+                var targetModeIdx = p.targetInfo.modeInfoIdx;
 
-            if (targetModeIdx != 0xFFFFFFFF && targetModeIdx < modeCount && !addedModeIndices.Contains(targetModeIdx))
-            {
-                newModes.Add(modes[targetModeIdx]);
-                targetPath.targetInfo.modeInfoIdx = newModeIndex++;
-                addedModeIndices.Add(targetModeIdx);
-            }
-            else
-            {
-                targetPath.targetInfo.modeInfoIdx = 0xFFFFFFFF;
-            }
+                if (sourceModeIdx != 0xFFFFFFFF && sourceModeIdx < modeCount && !addedModeIndices.Contains(sourceModeIdx))
+                {
+                    newModes.Add(modes[sourceModeIdx]);
+                    p.sourceInfo.modeInfoIdx = (uint)(newModes.Count - 1);
+                    addedModeIndices.Add(sourceModeIdx);
+                }
+                else if (sourceModeIdx != 0xFFFFFFFF && addedModeIndices.Contains(sourceModeIdx))
+                {
+                    // Mode already added — find its new index
+                    p.sourceInfo.modeInfoIdx = (uint)newModes.IndexOf(modes[sourceModeIdx]);
+                }
+                else
+                {
+                    p.sourceInfo.modeInfoIdx = 0xFFFFFFFF;
+                }
 
-            var newPaths = new[] { targetPath };
+                if (targetModeIdx != 0xFFFFFFFF && targetModeIdx < modeCount && !addedModeIndices.Contains(targetModeIdx))
+                {
+                    newModes.Add(modes[targetModeIdx]);
+                    p.targetInfo.modeInfoIdx = (uint)(newModes.Count - 1);
+                    addedModeIndices.Add(targetModeIdx);
+                }
+                else if (targetModeIdx != 0xFFFFFFFF && addedModeIndices.Contains(targetModeIdx))
+                {
+                    p.targetInfo.modeInfoIdx = (uint)newModes.IndexOf(modes[targetModeIdx]);
+                }
+                else
+                {
+                    p.targetInfo.modeInfoIdx = 0xFFFFFFFF;
+                }
+
+                newPaths.Add(p);
+            }
 
             return SetDisplayConfig(
-                1,
-                newPaths,
+                (uint)newPaths.Count,
+                newPaths.ToArray(),
                 (uint)newModes.Count,
                 newModes.ToArray(),
                 SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES | SDC_SAVE_TO_DATABASE) == 0;
