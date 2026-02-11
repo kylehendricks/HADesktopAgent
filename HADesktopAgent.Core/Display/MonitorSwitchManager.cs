@@ -6,12 +6,15 @@ namespace HADesktopAgent.Core.Display
 {
     public class MonitorSwitchManager : IDisposable
     {
+        private static readonly TimeSpan DisconnectDelay = TimeSpan.FromSeconds(15);
+
         private readonly ILogger<MonitorSwitchManager> _logger;
         private readonly IDisplayWatcher _displayWatcher;
         private readonly IMonitorSwitcher _monitorSwitcher;
         private readonly MqttHaManager _mqttHaManager;
         private readonly ILoggerFactory _loggerFactory;
         private readonly Dictionary<string, MonitorSwitch> _switches = new();
+        private readonly Dictionary<string, Timer> _pendingRemovals = new();
 
         public MonitorSwitchManager(
             ILogger<MonitorSwitchManager> logger,
@@ -66,18 +69,43 @@ namespace HADesktopAgent.Core.Display
             var current = _displayWatcher.AvailableMonitors;
             var existing = new HashSet<string>(_switches.Keys);
 
-            // Add new monitors
+            // Add new monitors (immediate) and cancel any pending removal
             foreach (var monitor in current)
             {
+                if (_pendingRemovals.Remove(monitor, out var timer))
+                {
+                    timer.Dispose();
+                    _logger.LogInformation("Monitor '{Monitor}' reappeared, cancelling pending removal", monitor);
+                }
+
                 if (!existing.Contains(monitor))
                     CreateSwitch(monitor);
             }
 
-            // Remove gone monitors
+            // Schedule delayed removal for gone monitors
             foreach (var monitor in existing)
             {
-                if (!current.Contains(monitor))
-                    RemoveSwitch(monitor);
+                if (!current.Contains(monitor) && !_pendingRemovals.ContainsKey(monitor))
+                {
+                    _logger.LogInformation(
+                        "Monitor '{Monitor}' disappeared, scheduling removal in {Delay}s",
+                        monitor, DisconnectDelay.TotalSeconds);
+
+                    var monitorName = monitor; // capture for closure
+                    _pendingRemovals[monitorName] = new Timer(
+                        _ =>
+                        {
+                            if (_pendingRemovals.Remove(monitorName))
+                            {
+                                _logger.LogInformation(
+                                    "Monitor '{Monitor}' still absent after delay, removing switch", monitorName);
+                                RemoveSwitch(monitorName);
+                            }
+                        },
+                        state: null,
+                        dueTime: DisconnectDelay,
+                        period: Timeout.InfiniteTimeSpan);
+                }
             }
         }
 
@@ -95,6 +123,10 @@ namespace HADesktopAgent.Core.Display
         {
             _displayWatcher.AvailableMonitorsUpdated -= HandleAvailableMonitorsUpdated;
             _displayWatcher.ActiveMonitorsUpdated -= HandleActiveMonitorsUpdated;
+
+            foreach (var timer in _pendingRemovals.Values)
+                timer.Dispose();
+            _pendingRemovals.Clear();
         }
     }
 }
