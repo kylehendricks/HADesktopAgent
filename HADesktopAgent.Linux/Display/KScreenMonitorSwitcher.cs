@@ -17,12 +17,12 @@ namespace HADesktopAgent.Linux.Display
         {
             try
             {
-                var edidMap = DrmEdidHelper.GetConnectorToFriendlyNameMap(_logger);
+                var edidMap = DrmEdidHelper.GetConnectorToMonitorInfoMap(_logger);
 
                 var directives = new List<string>();
-                foreach (var (connector, friendlyName) in edidMap)
+                foreach (var (connector, monitorInfo) in edidMap)
                 {
-                    var action = enabledMonitors.Contains(friendlyName) ? "enable" : "disable";
+                    var action = enabledMonitors.Contains(monitorInfo.Name) ? "enable" : "disable";
                     directives.Add($"output.{connector}.{action}");
                 }
 
@@ -69,10 +69,10 @@ namespace HADesktopAgent.Linux.Display
         {
             try
             {
-                var edidMap = DrmEdidHelper.GetConnectorToFriendlyNameMap(_logger);
+                var edidMap = DrmEdidHelper.GetConnectorToMonitorInfoMap(_logger);
 
                 // Find the target connector for the friendly name
-                var targetConnector = edidMap.FirstOrDefault(kvp => kvp.Value == monitorName).Key;
+                var targetConnector = edidMap.FirstOrDefault(kvp => kvp.Value.Name == monitorName).Key;
                 if (targetConnector == null)
                 {
                     // Maybe monitorName is already a connector name

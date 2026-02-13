@@ -33,7 +33,8 @@ if (!File.Exists(configPath))
     {
         Agent = new AgentConfiguration(),
         Mqtt = new MqttConfiguration(),
-        ProcessSwitches = Array.Empty<ProcessSwitchConfiguration>()
+        ProcessSwitches = Array.Empty<ProcessSwitchConfiguration>(),
+        NameMappings = new NameMappingConfiguration()
     };
     var json = JsonSerializer.Serialize(defaultConfig, new JsonSerializerOptions { WriteIndented = true });
     File.WriteAllText(configPath, json);
@@ -78,6 +79,10 @@ builder.Services.AddOptions<List<ProcessSwitchConfiguration>>()
 // Register custom validator
 builder.Services.AddSingleton<IValidateOptions<List<ProcessSwitchConfiguration>>, ProcessSwitchConfigurationValidator>();
 
+// Configure NameMapping options
+builder.Services.AddOptions<NameMappingConfiguration>()
+    .Bind(builder.Configuration.GetSection("NameMappings"));
+
 builder.Services.AddLogging(loggingBuilder =>
 {
     loggingBuilder.ClearProviders();
@@ -112,24 +117,33 @@ try
     var audioManager = host.Services.GetRequiredService<IAudioManager>();
     var sleepControl = host.Services.GetRequiredService<ISleepControl>();
     var processSwitchConfig = host.Services.GetRequiredService<IOptions<List<ProcessSwitchConfiguration>>>();
+    var nameMappingConfig = host.Services.GetRequiredService<IOptions<NameMappingConfiguration>>().Value;
 
-    // Register per-monitor switch entities
+    // Log discovered monitor identifiers to help users configure name mappings
+    foreach (var (name, info) in displayWatcher.MonitorDetails)
+    {
+        Log.Information("Discovered monitor: '{Name}' (EDID: {EdidId})", name, info.EdidIdentifier ?? "unavailable");
+    }
+
+    // Register per-monitor switch entities (with name mappings)
     var monitorSwitchManager = new MonitorSwitchManager(
         loggerFactory.CreateLogger<MonitorSwitchManager>(),
         loggerFactory,
         displayWatcher,
         monitorSwitcher,
-        mqttHaManager);
+        mqttHaManager,
+        nameMappingConfig.Monitors);
 
-    // Register display configuration API
+    // Register display configuration API (shares the live mapped-name dictionary from the monitor switch manager)
     var displayConfigApi = new DisplayConfigurationApi(
         loggerFactory.CreateLogger<DisplayConfigurationApi>(),
         displayWatcher,
-        monitorSwitcher);
+        monitorSwitcher,
+        monitorSwitchManager.MappedToOriginalNames);
     await mqttHaManager.RegisterApi(displayConfigApi);
 
-    // Register audio select entity
-    var audioSelect = new AudioSelect(loggerFactory.CreateLogger<AudioSelect>(), audioManager);
+    // Register audio select entity (with name mappings)
+    var audioSelect = new AudioSelect(loggerFactory.CreateLogger<AudioSelect>(), audioManager, nameMappingConfig.AudioDevices);
     await mqttHaManager.RegisterEntity(audioSelect);
 
     // Register sleep button entity

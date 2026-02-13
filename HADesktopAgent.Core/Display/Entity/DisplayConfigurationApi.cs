@@ -9,14 +9,20 @@ namespace HADesktopAgent.Core.Display.Entity
         private readonly ILogger<DisplayConfigurationApi> _logger;
         private readonly IDisplayWatcher _displayWatcher;
         private readonly IMonitorSwitcher _monitorSwitcher;
+        private readonly IReadOnlyDictionary<string, string>? _mappedToOriginalNames;
 
         public string Name => "display_config";
 
-        public DisplayConfigurationApi(ILogger<DisplayConfigurationApi> logger, IDisplayWatcher displayWatcher, IMonitorSwitcher monitorSwitcher)
+        public DisplayConfigurationApi(
+            ILogger<DisplayConfigurationApi> logger,
+            IDisplayWatcher displayWatcher,
+            IMonitorSwitcher monitorSwitcher,
+            IReadOnlyDictionary<string, string>? mappedToOriginalNames = null)
         {
             _logger = logger;
             _displayWatcher = displayWatcher;
             _monitorSwitcher = monitorSwitcher;
+            _mappedToOriginalNames = mappedToOriginalNames;
         }
 
         public void HandleCommand(string payload)
@@ -38,7 +44,16 @@ namespace HADesktopAgent.Core.Display.Entity
                 return;
             }
 
-            var enabledSet = new HashSet<string>(monitorNames);
+            // Resolve mapped names to original hardware names
+            var enabledSet = new HashSet<string>();
+            foreach (var name in monitorNames)
+            {
+                string originalName = name;
+                if (_mappedToOriginalNames != null && _mappedToOriginalNames.TryGetValue(name, out var resolved))
+                    originalName = resolved;
+                enabledSet.Add(originalName);
+            }
+
             var available = _displayWatcher.AvailableMonitors;
 
             foreach (var name in enabledSet)

@@ -11,6 +11,7 @@ namespace HADesktopAgent.Windows.Display
         private readonly MonitorWatcher _monitorWatcher;
         private SortedSet<string> _availableMonitors = [];
         private SortedSet<string> _activeMonitors = [];
+        private Dictionary<string, MonitorInfo> _monitorDetails = new();
         private System.Threading.Timer? _delayedUpdateTimer;
         private readonly Lock _timerLock = new();
 
@@ -26,6 +27,7 @@ namespace HADesktopAgent.Windows.Display
         }
         public SortedSet<string> AvailableMonitors => _availableMonitors;
         public SortedSet<string> ActiveMonitors => _activeMonitors;
+        public Dictionary<string, MonitorInfo> MonitorDetails => _monitorDetails;
 
         public void Dispose()
         {
@@ -61,6 +63,18 @@ namespace HADesktopAgent.Windows.Display
             var monitors = MonitorSwitcher.GetMonitors();
             var availableMonitors = monitors.Select(m => m.Name);
             var activeMonitors = monitors.FindAll(m => m.IsActive).Select(m => m.Name);
+            var monitorDetails = new Dictionary<string, MonitorInfo>();
+
+            foreach (var monitor in monitors)
+            {
+                monitorDetails.TryAdd(monitor.Name, new MonitorInfo
+                {
+                    Name = monitor.Name,
+                    EdidIdentifier = monitor.EdidIdentifier
+                });
+            }
+
+            _monitorDetails = monitorDetails;
 
             if (!_availableMonitors.SetEquals(availableMonitors))
             {

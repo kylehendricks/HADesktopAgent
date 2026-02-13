@@ -9,6 +9,7 @@ A cross-platform desktop agent that integrates with [Home Assistant](https://www
 - **Audio Device Select** — A select entity listing all available audio output devices. Changing the selection switches the system default audio output.
 - **Process Switches** — User-configurable switches that launch and stop applications. Define them in `config.json` with a path, optional arguments, and an icon.
 - **Sleep Button** — A button entity that triggers system sleep/suspend.
+- **Name Mappings** — Custom display names for monitors and audio devices in Home Assistant. Monitors can be mapped by a stable EDID identifier (manufacturer + product code + serial) derived from the monitor's firmware, so names survive driver updates and port changes.
 
 ## Prerequisites
 
@@ -19,6 +20,7 @@ A cross-platform desktop agent that integrates with [Home Assistant](https://www
 - .NET 10.0 SDK or later
 - `pactl` (PulseAudio utilities) — for audio device control
 - `kscreen-doctor` (KDE Plasma) — for display management
+- `edid-decode` — for reading monitor EDID data (name and identifier)
 - systemd with logind — for sleep and power state
 - D-Bus
 
@@ -27,7 +29,7 @@ A cross-platform desktop agent that integrates with [Home Assistant](https://www
 On first run the agent creates a default config file:
 
 - **Linux**: `~/.local/share/HADesktopAgent/config.json`
-- **Windows**: `%LOCALAPPDATA%\HAWindowsAgent\config.json`
+- **Windows**: `%LOCALAPPDATA%\HADesktopAgent\config.json`
 
 ```json
 {
@@ -48,7 +50,16 @@ On first run the agent creates a default config file:
       "ApplicationPath": "/usr/bin/vlc",
       "Icon": "mdi:play"
     }
-  ]
+  ],
+  "NameMappings": {
+    "Monitors": {
+      "SAM-7796-HNTXA00720": "Gaming Monitor",
+      "GSM-83CD": "Living Room TV"
+    },
+    "AudioDevices": {
+      "Built-in Audio Digital Stereo (HDMI)": "TV Speakers"
+    }
+  }
 }
 ```
 
@@ -65,6 +76,12 @@ On first run the agent creates a default config file:
 | `ProcessSwitches` | `Icon` | [Material Design icon](https://pictogrammers.com/library/mdi/) (default: `mdi:application`) |
 | `ProcessSwitches` | `StartArgument` | Optional CLI args passed on launch |
 | `ProcessSwitches` | `StopArgument` | Optional CLI args for graceful stop (omit to kill process) |
+| `NameMappings` | `Monitors` | Map of identifier → custom name for monitors (see [Name Mappings](#name-mappings)) |
+| `NameMappings` | `AudioDevices` | Map of device name → custom name for audio devices (see [Name Mappings](#name-mappings)) |
+
+## Name Mappings
+
+The `NameMappings` config section lets you assign custom names to monitors and audio devices in Home Assistant. Monitors can be mapped by a stable EDID identifier (derived from the monitor's firmware) or by display name. Audio devices are mapped by their device name as reported by the OS. On startup, the agent logs each monitor's identifier to help you find the right key to use — check the log files for lines like `Discovered monitor: 'Odyssey G91SD' (EDID: SAM-7796-HNTXA00720)`.
 
 ## Installation
 
@@ -100,7 +117,7 @@ From the `HADesktopAgent.Windows/` directory:
 .\install-tray-app.ps1
 ```
 
-This publishes to `%LOCALAPPDATA%\HAWindowsAgent\` and creates a startup shortcut so the agent launches on login. It runs as a system tray application.
+This publishes to `%LOCALAPPDATA%\HADesktopAgent\` and creates a startup shortcut so the agent launches on login. It runs as a system tray application.
 
 To uninstall:
 
@@ -123,7 +140,7 @@ dotnet build HADesktopAgent.Windows/
 Logs are written with Serilog to rolling daily files (7-day retention):
 
 - **Linux**: `~/.local/share/HADesktopAgent/logs/`
-- **Windows**: `%LOCALAPPDATA%\HAWindowsAgent\logs\`
+- **Windows**: `%LOCALAPPDATA%\HADesktopAgent\logs/`
 
 ## Home Assistant MQTT Setup
 
@@ -135,15 +152,16 @@ The agent uses [MQTT Discovery](https://www.home-assistant.io/integrations/mqtt/
 
 ## Display Configuration
 
-In addition to the per-monitor switches, the agent listens on `ha_desktop_agent/{device_id}/display_config/command` for an atomic display configuration payload. Publish a JSON array of monitor names to enable — all unlisted monitors are disabled in one shot.
+In addition to the per-monitor switches, the agent listens on `ha_desktop_agent/{device_id}/display_config/command` for an atomic display configuration payload. Publish a JSON array of monitor names to enable — all unlisted monitors are disabled in one shot. If name mappings are configured, use the mapped names in the payload.
 
 ```yaml
 # Example: HA script to switch to a single gaming monitor
+# (uses the mapped name from NameMappings config)
 script:
   gaming_mode:
     sequence:
       - service: mqtt.publish
         data:
           topic: ha_desktop_agent/my_desktop/display_config/command
-          payload: '["Odyssey G91SD"]'
+          payload: '["Gaming Monitor"]'
 ```

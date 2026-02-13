@@ -12,6 +12,7 @@ namespace HADesktopAgent.Linux.Display
 
         public SortedSet<string> AvailableMonitors { get; private set; } = [];
         public SortedSet<string> ActiveMonitors { get; private set; } = [];
+        public Dictionary<string, MonitorInfo> MonitorDetails { get; private set; } = new();
 
         private readonly ILogger<KScreenDisplayWatcher> _logger;
         private readonly Timer _pollTimer;
@@ -38,9 +39,10 @@ namespace HADesktopAgent.Linux.Display
                 var output = RunKScreenDoctor();
                 if (output == null) return;
 
-                var edidMap = DrmEdidHelper.GetConnectorToFriendlyNameMap(_logger);
+                var edidMap = DrmEdidHelper.GetConnectorToMonitorInfoMap(_logger);
                 var newAvailable = new SortedSet<string>();
                 var newActive = new SortedSet<string>();
+                var newDetails = new Dictionary<string, MonitorInfo>();
 
                 // Strip ANSI escape codes
                 output = AnsiEscapeRegex().Replace(output, "");
@@ -57,10 +59,11 @@ namespace HADesktopAgent.Linux.Display
                         // Save previous output state
                         if (currentConnector != null && isConnected)
                         {
-                            var friendlyName = DrmEdidHelper.GetFriendlyNameForConnector(currentConnector, edidMap, _logger);
-                            newAvailable.Add(friendlyName);
+                            var monitorInfo = DrmEdidHelper.GetMonitorInfoForConnector(currentConnector, edidMap, _logger);
+                            newAvailable.Add(monitorInfo.Name);
+                            newDetails.TryAdd(monitorInfo.Name, monitorInfo);
                             if (isEnabled)
-                                newActive.Add(friendlyName);
+                                newActive.Add(monitorInfo.Name);
                         }
 
                         currentConnector = headerMatch.Groups[1].Value;
@@ -79,11 +82,14 @@ namespace HADesktopAgent.Linux.Display
                 // Handle the last output
                 if (currentConnector != null && isConnected)
                 {
-                    var friendlyName = DrmEdidHelper.GetFriendlyNameForConnector(currentConnector, edidMap, _logger);
-                    newAvailable.Add(friendlyName);
+                    var monitorInfo = DrmEdidHelper.GetMonitorInfoForConnector(currentConnector, edidMap, _logger);
+                    newAvailable.Add(monitorInfo.Name);
+                    newDetails.TryAdd(monitorInfo.Name, monitorInfo);
                     if (isEnabled)
-                        newActive.Add(friendlyName);
+                        newActive.Add(monitorInfo.Name);
                 }
+
+                MonitorDetails = newDetails;
 
                 // Fire events if changed
                 if (!AvailableMonitors.SetEquals(newAvailable))

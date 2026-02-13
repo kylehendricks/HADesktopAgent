@@ -33,7 +33,8 @@ if (!File.Exists(configPath))
     {
         Agent = new AgentConfiguration(),
         Mqtt = new MqttConfiguration(),
-        ProcessSwitches = Array.Empty<ProcessSwitchConfiguration>()
+        ProcessSwitches = Array.Empty<ProcessSwitchConfiguration>(),
+        NameMappings = new NameMappingConfiguration()
     };
     var json = JsonSerializer.Serialize(defaultConfig, new JsonSerializerOptions { WriteIndented = true });
     File.WriteAllText(configPath, json);
@@ -77,6 +78,10 @@ builder.Services.AddOptions<List<ProcessSwitchConfiguration>>()
 
 // Register custom validator
 builder.Services.AddSingleton<IValidateOptions<List<ProcessSwitchConfiguration>>, ProcessSwitchConfigurationValidator>();
+
+// Configure NameMapping options
+builder.Services.AddOptions<NameMappingConfiguration>()
+    .Bind(builder.Configuration.GetSection("NameMappings"));
 
 builder.Services.AddLogging(loggingBuilder =>
 {

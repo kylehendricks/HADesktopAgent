@@ -10,5 +10,11 @@ namespace HADesktopAgent.Core.Display
 
         SortedSet<string> AvailableMonitors { get; }
         SortedSet<string> ActiveMonitors { get; }
+
+        /// <summary>
+        /// Provides detailed information about available monitors, keyed by display name.
+        /// Includes EDID-based identifiers for name mapping support.
+        /// </summary>
+        Dictionary<string, MonitorInfo> MonitorDetails { get; }
     }
 }

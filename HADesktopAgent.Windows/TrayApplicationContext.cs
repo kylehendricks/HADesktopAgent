@@ -1,6 +1,8 @@
+using HADesktopAgent.Core;
 using HADesktopAgent.Core.Audio;
 using HADesktopAgent.Core.Audio.Entity;
 using HADesktopAgent.Core.Display;
+using HADesktopAgent.Core.Display.Entity;
 using HADesktopAgent.Core.Mqtt;
 using HADesktopAgent.Core.Process;
 using HADesktopAgent.Core.Process.Entity;
@@ -50,16 +52,27 @@ namespace HADesktopAgent.Windows
             var sleepControl = _host.Services.GetRequiredService<ISleepControl>();
             var loggerFactory = _host.Services.GetRequiredService<ILoggerFactory>();
             var processSwitchConfig = _host.Services.GetRequiredService<IOptions<List<ProcessSwitchConfiguration>>>();
+            var nameMappingConfig = _host.Services.GetRequiredService<IOptions<NameMappingConfiguration>>().Value;
 
-            // Create per-monitor switch entities
+            // Create per-monitor switch entities (with name mappings)
             _monitorSwitchManager = new MonitorSwitchManager(
                 loggerFactory.CreateLogger<MonitorSwitchManager>(),
                 loggerFactory,
                 displayWatcher,
                 monitorSwitcher,
-                mqttHaManager);
+                mqttHaManager,
+                nameMappingConfig.Monitors);
 
-            _audioSelect = new AudioSelect(loggerFactory.CreateLogger<AudioSelect>(), audioManager);
+            // Register display configuration API (shares the live mapped-name dictionary from the monitor switch manager)
+            var displayConfigApi = new DisplayConfigurationApi(
+                loggerFactory.CreateLogger<DisplayConfigurationApi>(),
+                displayWatcher,
+                monitorSwitcher,
+                _monitorSwitchManager.MappedToOriginalNames);
+            await mqttHaManager.RegisterApi(displayConfigApi);
+
+            // Register audio select entity (with name mappings)
+            _audioSelect = new AudioSelect(loggerFactory.CreateLogger<AudioSelect>(), audioManager, nameMappingConfig.AudioDevices);
             await mqttHaManager.RegisterEntity(_audioSelect);
 
             // Create ProcessSwitch instances from configuration

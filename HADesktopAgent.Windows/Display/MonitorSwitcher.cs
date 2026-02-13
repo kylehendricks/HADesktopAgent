@@ -1,4 +1,5 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace HADesktopAgent.Windows.Display
 {
@@ -17,6 +18,14 @@ namespace HADesktopAgent.Windows.Display
             public required string Name { get; init; }
             public required bool IsActive { get; init; }
             public required string DevicePath { get; init; }
+
+            /// <summary>
+            /// EDID-based identifier combining manufacturer, product code, and serial number.
+            /// Format: "MFG-PRODUCT" or "MFG-PRODUCT-SERIAL" (e.g., "SAM-7796-HNTXA00720").
+            /// This identifier is cross-platform (identical on Windows and Linux).
+            /// Null if EDID data is unavailable.
+            /// </summary>
+            public string? EdidIdentifier { get; init; }
         }
 
         /// <summary>
@@ -64,15 +73,89 @@ namespace HADesktopAgent.Windows.Display
 
                 seenPaths.Add(deviceName.monitorDevicePath);
 
+                var edidIdentifier = BuildEdidIdentifier(
+                    deviceName.edidManufactureId,
+                    deviceName.edidProductCodeId,
+                    deviceName.monitorDevicePath);
+
                 monitors.Add(new Monitor
                 {
                     Name = deviceName.monitorFriendlyDeviceName,
                     DevicePath = deviceName.monitorDevicePath,
-                    IsActive = (path.flags & DISPLAYCONFIG_PATH_ACTIVE) != 0
+                    IsActive = (path.flags & DISPLAYCONFIG_PATH_ACTIVE) != 0,
+                    EdidIdentifier = edidIdentifier
                 });
             }
 
             return monitors;
+        }
+
+        /// <summary>
+        /// Builds a cross-platform EDID identifier from the Windows display config data.
+        /// Decodes the EDID manufacturer ID to a 3-letter PNP code, formats the product code as hex,
+        /// and attempts to extract a serial number from the monitor device path.
+        /// </summary>
+        private static string? BuildEdidIdentifier(ushort edidManufactureId, ushort edidProductCodeId, string monitorDevicePath)
+        {
+            if (edidManufactureId == 0 && edidProductCodeId == 0)
+                return null;
+
+            // The edidManufactureId from Windows is big-endian encoded (same as EDID bytes 8-9)
+            var manufacturer = DecodeManufacturer(edidManufactureId);
+
+            // The edidProductCodeId from Windows is already the little-endian product code value
+            var productCode = edidProductCodeId;
+
+            // Try to extract serial from the monitor device path
+            // Typical format: \\?\DISPLAY#<MFG><PRODUCT>#<serial_or_instance>#<guid>
+            var serial = ExtractSerialFromDevicePath(monitorDevicePath);
+
+            if (!string.IsNullOrEmpty(serial))
+            {
+                return $"{manufacturer}-{productCode:X4}-{serial}";
+            }
+
+            return $"{manufacturer}-{productCode:X4}";
+        }
+
+        /// <summary>
+        /// Decodes the 16-bit EDID manufacturer ID into a 3-letter PNP ID code.
+        /// The encoding is the same as EDID bytes 8-9 (big-endian).
+        /// </summary>
+        internal static string DecodeManufacturer(ushort edidManufactureId)
+        {
+            var c1 = (char)(((edidManufactureId >> 10) & 0x1F) + 'A' - 1);
+            var c2 = (char)(((edidManufactureId >> 5) & 0x1F) + 'A' - 1);
+            var c3 = (char)((edidManufactureId & 0x1F) + 'A' - 1);
+            return new string([c1, c2, c3]);
+        }
+
+        /// <summary>
+        /// Attempts to extract a serial number or unique instance ID from a Windows monitor device path.
+        /// Path format: \\?\DISPLAY#MFGxxxx#serial_or_uid#{guid}
+        /// </summary>
+        private static string? ExtractSerialFromDevicePath(string monitorDevicePath)
+        {
+            if (string.IsNullOrEmpty(monitorDevicePath))
+                return null;
+
+            // Split by # to get segments: [\\?\DISPLAY, MFGxxxx, serial_or_uid, {guid}]
+            var segments = monitorDevicePath.Split('#');
+            if (segments.Length < 3)
+                return null;
+
+            var instanceId = segments[2];
+
+            // Skip generic instance IDs that aren't real serial numbers
+            // These typically start with a UID prefix followed by numbers
+            if (string.IsNullOrWhiteSpace(instanceId))
+                return null;
+
+            // Instance IDs that are just hex UIDs (like "5&12345678&0&UID256") aren't serial numbers
+            if (instanceId.Contains("&UID", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            return instanceId;
         }
 
         /// <summary>
