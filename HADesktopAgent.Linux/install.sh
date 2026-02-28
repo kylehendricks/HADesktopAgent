@@ -27,8 +27,12 @@ echo "Application published to: $INSTALL_DIR"
 echo ""
 echo "Installing systemd user service..."
 mkdir -p "$SERVICE_DIR"
-cp "$SCRIPT_DIR/$SERVICE_NAME" "$SERVICE_DIR/$SERVICE_NAME"
 
+# Disable before overwriting so systemd removes symlinks based on the old WantedBy= targets
+# (e.g. a previous version may have been linked to default.target)
+systemctl --user disable "$SERVICE_NAME" 2>/dev/null || true
+
+cp "$SCRIPT_DIR/$SERVICE_NAME" "$SERVICE_DIR/$SERVICE_NAME"
 systemctl --user daemon-reload
 systemctl --user enable "$SERVICE_NAME"
 

@@ -1,7 +1,7 @@
 [Unit]
 Description=Home Assistant Desktop Agent
 PartOf=graphical-session.target
-After=graphical-session.target
+After=plasma-core.target graphical-session.target
 
 [Service]
 Type=simple
