@@ -92,16 +92,16 @@ namespace HADesktopAgent.Windows.Display
 
         /// <summary>
         /// Builds a cross-platform EDID identifier from the Windows display config data.
-        /// Decodes the EDID manufacturer ID to a 3-letter PNP code, formats the product code as hex,
-        /// and attempts to extract a serial number from the monitor device path.
         /// </summary>
         private static string? BuildEdidIdentifier(ushort edidManufactureId, ushort edidProductCodeId, string monitorDevicePath)
         {
             if (edidManufactureId == 0 && edidProductCodeId == 0)
                 return null;
 
-            // The edidManufactureId from Windows is big-endian encoded (same as EDID bytes 8-9)
-            var manufacturer = DecodeManufacturer(edidManufactureId);
+            // Windows returns edidManufactureId as a little-endian ushort, but PNP decoding
+            // expects big-endian (EDID bytes 8-9 order). Swap the bytes before decoding.
+            var swapped = (ushort)((edidManufactureId << 8) | (edidManufactureId >> 8));
+            var manufacturer = DecodeManufacturer(swapped);
 
             // The edidProductCodeId from Windows is already the little-endian product code value
             var productCode = edidProductCodeId;
