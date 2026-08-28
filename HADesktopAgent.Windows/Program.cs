@@ -92,6 +92,7 @@ builder.Services.AddSingleton<IPowerState>(new SystemEventsPowerState());
 builder.Services.AddSingleton<MqttManager>();
 builder.Services.AddSingleton<IDisplayWatcher>(new DesktopManagerDisplayWatcher(new DesktopManager.MonitorWatcher()));
 builder.Services.AddSingleton<IMonitorSwitcher>(new WindowsMonitorSwitcher());
+builder.Services.AddSingleton<IRefreshRateController, WindowsRefreshRateController>();
 builder.Services.AddSingleton<IAudioManager, AudioDeviceManager>();
 builder.Services.AddSingleton<ISleepControl>(new WindowsSleepControl());
 builder.Services.AddSingleton(sp =>

@@ -48,11 +48,19 @@ namespace HADesktopAgent.Windows
             var mqttHaManager = _host.Services.GetRequiredService<MqttHaManager>();
             var displayWatcher = _host.Services.GetRequiredService<IDisplayWatcher>();
             var monitorSwitcher = _host.Services.GetRequiredService<IMonitorSwitcher>();
+            var refreshRateController = _host.Services.GetRequiredService<IRefreshRateController>();
             var audioManager = _host.Services.GetRequiredService<IAudioManager>();
             var sleepControl = _host.Services.GetRequiredService<ISleepControl>();
             var loggerFactory = _host.Services.GetRequiredService<ILoggerFactory>();
             var processSwitchConfig = _host.Services.GetRequiredService<IOptions<List<ProcessSwitchConfiguration>>>();
             var nameMappingConfig = _host.Services.GetRequiredService<IOptions<NameMappingConfiguration>>().Value;
+
+            // Log discovered monitor identifiers to help users configure name mappings
+            var startupLogger = loggerFactory.CreateLogger<TrayApplicationContext>();
+            foreach (var (name, info) in displayWatcher.MonitorDetails)
+            {
+                startupLogger.LogInformation("Discovered monitor: '{Name}' (EDID: {EdidId})", name, info.EdidIdentifier ?? "unavailable");
+            }
 
             // Create per-monitor switch entities (with name mappings)
             _monitorSwitchManager = new MonitorSwitchManager(
@@ -61,7 +69,8 @@ namespace HADesktopAgent.Windows
                 displayWatcher,
                 monitorSwitcher,
                 mqttHaManager,
-                nameMappingConfig.Monitors);
+                nameMappingConfig.Monitors,
+                refreshRateController);
 
             // Register display configuration API (shares the live mapped-name dictionary from the monitor switch manager)
             var displayConfigApi = new DisplayConfigurationApi(

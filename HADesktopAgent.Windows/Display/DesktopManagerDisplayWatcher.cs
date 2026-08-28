@@ -1,5 +1,6 @@
 using DesktopManager;
 using HADesktopAgent.Core.Display;
+using CoreMonitorInfo = HADesktopAgent.Core.Display.MonitorInfo;
 
 namespace HADesktopAgent.Windows.Display
 {
@@ -7,11 +8,12 @@ namespace HADesktopAgent.Windows.Display
     {
         public event IDisplayWatcher.AvailableMonitorsUpdatedHandler? AvailableMonitorsUpdated;
         public event IDisplayWatcher.ActiveMonitorsUpdatedHandler? ActiveMonitorsUpdated;
+        public event IDisplayWatcher.DisplaySettingsUpdatedHandler? DisplaySettingsUpdated;
 
         private readonly MonitorWatcher _monitorWatcher;
         private SortedSet<string> _availableMonitors = [];
         private SortedSet<string> _activeMonitors = [];
-        private Dictionary<string, MonitorInfo> _monitorDetails = new();
+        private Dictionary<string, CoreMonitorInfo> _monitorDetails = new();
         private System.Threading.Timer? _delayedUpdateTimer;
         private readonly Lock _timerLock = new();
 
@@ -27,7 +29,7 @@ namespace HADesktopAgent.Windows.Display
         }
         public SortedSet<string> AvailableMonitors => _availableMonitors;
         public SortedSet<string> ActiveMonitors => _activeMonitors;
-        public Dictionary<string, MonitorInfo> MonitorDetails => _monitorDetails;
+        public Dictionary<string, CoreMonitorInfo> MonitorDetails => _monitorDetails;
 
         public void Dispose()
         {
@@ -63,11 +65,11 @@ namespace HADesktopAgent.Windows.Display
             var monitors = MonitorSwitcher.GetMonitors();
             var availableMonitors = monitors.Select(m => m.Name);
             var activeMonitors = monitors.FindAll(m => m.IsActive).Select(m => m.Name);
-            var monitorDetails = new Dictionary<string, MonitorInfo>();
+            var monitorDetails = new Dictionary<string, CoreMonitorInfo>();
 
             foreach (var monitor in monitors)
             {
-                monitorDetails.TryAdd(monitor.Name, new MonitorInfo
+                monitorDetails.TryAdd(monitor.Name, new CoreMonitorInfo
                 {
                     Name = monitor.Name,
                     EdidIdentifier = monitor.EdidIdentifier
@@ -87,6 +89,10 @@ namespace HADesktopAgent.Windows.Display
                 _activeMonitors = [.. activeMonitors];
                 ActiveMonitorsUpdated?.Invoke();
             }
+
+            // Settings (e.g. refresh rate) can change without altering the monitor
+            // sets above, so always notify; subscribers re-query and diff.
+            DisplaySettingsUpdated?.Invoke();
         }
     }
 }

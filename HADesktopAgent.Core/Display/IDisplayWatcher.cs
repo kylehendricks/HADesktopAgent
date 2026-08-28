@@ -4,9 +4,17 @@ namespace HADesktopAgent.Core.Display
     {
         delegate void AvailableMonitorsUpdatedHandler();
         delegate void ActiveMonitorsUpdatedHandler();
+        delegate void DisplaySettingsUpdatedHandler();
 
         event AvailableMonitorsUpdatedHandler? AvailableMonitorsUpdated;
         event ActiveMonitorsUpdatedHandler? ActiveMonitorsUpdated;
+
+        /// <summary>
+        /// Fires whenever display settings may have changed (mode, refresh rate,
+        /// topology), including changes that don't alter the available/active monitor
+        /// sets. May fire spuriously; subscribers should re-query and diff.
+        /// </summary>
+        event DisplaySettingsUpdatedHandler? DisplaySettingsUpdated;
 
         SortedSet<string> AvailableMonitors { get; }
         SortedSet<string> ActiveMonitors { get; }

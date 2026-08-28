@@ -9,6 +9,7 @@ namespace HADesktopAgent.Linux.Display
     {
         public event IDisplayWatcher.AvailableMonitorsUpdatedHandler? AvailableMonitorsUpdated;
         public event IDisplayWatcher.ActiveMonitorsUpdatedHandler? ActiveMonitorsUpdated;
+        public event IDisplayWatcher.DisplaySettingsUpdatedHandler? DisplaySettingsUpdated;
 
         public SortedSet<string> AvailableMonitors { get; private set; } = [];
         public SortedSet<string> ActiveMonitors { get; private set; } = [];
@@ -105,6 +106,8 @@ namespace HADesktopAgent.Linux.Display
                     _logger.LogDebug("Active monitors updated: {Monitors}", string.Join(", ", newActive));
                     ActiveMonitorsUpdated?.Invoke();
                 }
+
+                DisplaySettingsUpdated?.Invoke();
             }
             catch (Exception ex)
             {

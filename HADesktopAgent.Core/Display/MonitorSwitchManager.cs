@@ -14,8 +14,14 @@ namespace HADesktopAgent.Core.Display
         private readonly MqttHaManager _mqttHaManager;
         private readonly ILoggerFactory _loggerFactory;
         private readonly Dictionary<string, string> _monitorNameMappings;
+        private readonly IRefreshRateController? _refreshRateController;
         private readonly Dictionary<string, MonitorSwitch> _switches = new();
+        private readonly Dictionary<string, RefreshRateSelect> _refreshRateSelects = new();
         private readonly Dictionary<string, Timer> _pendingRemovals = new();
+
+        // Guards _switches/_pendingRemovals/_mappedToOriginalNames, which are hit from
+        // both display-watcher event threads and removal Timer callbacks.
+        private readonly object _lock = new();
 
         /// <summary>
         /// Maps mapped display names back to original hardware names for control operations.
@@ -36,7 +42,8 @@ namespace HADesktopAgent.Core.Display
             IDisplayWatcher displayWatcher,
             IMonitorSwitcher monitorSwitcher,
             MqttHaManager mqttHaManager,
-            Dictionary<string, string>? monitorNameMappings = null)
+            Dictionary<string, string>? monitorNameMappings = null,
+            IRefreshRateController? refreshRateController = null)
         {
             _logger = logger;
             _loggerFactory = loggerFactory;
@@ -44,6 +51,7 @@ namespace HADesktopAgent.Core.Display
             _monitorSwitcher = monitorSwitcher;
             _mqttHaManager = mqttHaManager;
             _monitorNameMappings = monitorNameMappings ?? new();
+            _refreshRateController = refreshRateController;
 
             // Create switches for currently available monitors
             foreach (var monitor in _displayWatcher.AvailableMonitors)
@@ -122,6 +130,20 @@ namespace HADesktopAgent.Core.Display
             _switches[displayName] = monitorSwitch;
             _ = _mqttHaManager.RegisterEntity(monitorSwitch);
             _logger.LogInformation("Registered monitor switch for '{Monitor}' (original: '{OriginalName}')", displayName, originalMonitorName);
+
+            if (_refreshRateController != null)
+            {
+                var refreshRateSelect = new RefreshRateSelect(
+                    _loggerFactory.CreateLogger<RefreshRateSelect>(),
+                    displayName,
+                    originalMonitorName,
+                    _refreshRateController,
+                    _displayWatcher);
+
+                _refreshRateSelects[displayName] = refreshRateSelect;
+                _ = _mqttHaManager.RegisterEntity(refreshRateSelect);
+                _logger.LogInformation("Registered refresh rate select for '{Monitor}'", displayName);
+            }
         }
 
         private void RemoveSwitch(string displayName)
@@ -132,66 +154,81 @@ namespace HADesktopAgent.Core.Display
             _mappedToOriginalNames.Remove(displayName);
             _ = _mqttHaManager.UnregisterEntity(monitorSwitch);
             _logger.LogInformation("Unregistered monitor switch for '{Monitor}'", displayName);
+
+            if (_refreshRateSelects.Remove(displayName, out var refreshRateSelect))
+            {
+                refreshRateSelect.Dispose();
+                _ = _mqttHaManager.UnregisterEntity(refreshRateSelect);
+            }
         }
 
         private void HandleAvailableMonitorsUpdated()
         {
-            var current = _displayWatcher.AvailableMonitors;
-            var existing = new HashSet<string>(_switches.Keys);
-
-            // Build set of current mapped names
-            var currentMappedNames = new HashSet<string>();
-            foreach (var monitor in current)
+            lock (_lock)
             {
-                var mappedName = ResolveMappedName(monitor);
-                currentMappedNames.Add(mappedName);
+                var current = _displayWatcher.AvailableMonitors;
+                var existing = new HashSet<string>(_switches.Keys);
 
-                if (_pendingRemovals.Remove(mappedName, out var timer))
+                // Build set of current mapped names
+                var currentMappedNames = new HashSet<string>();
+                foreach (var monitor in current)
                 {
-                    timer.Dispose();
-                    _logger.LogInformation("Monitor '{Monitor}' reappeared, cancelling pending removal", mappedName);
+                    var mappedName = ResolveMappedName(monitor);
+                    currentMappedNames.Add(mappedName);
+
+                    if (_pendingRemovals.Remove(mappedName, out var timer))
+                    {
+                        timer.Dispose();
+                        _logger.LogInformation("Monitor '{Monitor}' reappeared, cancelling pending removal", mappedName);
+                    }
+
+                    if (!existing.Contains(mappedName))
+                        CreateSwitch(monitor, mappedName);
                 }
 
-                if (!existing.Contains(mappedName))
-                    CreateSwitch(monitor, mappedName);
-            }
-
-            // Schedule delayed removal for gone monitors
-            foreach (var displayName in existing)
-            {
-                if (!currentMappedNames.Contains(displayName) && !_pendingRemovals.ContainsKey(displayName))
+                // Schedule delayed removal for gone monitors
+                foreach (var displayName in existing)
                 {
-                    _logger.LogInformation(
-                        "Monitor '{Monitor}' disappeared, scheduling removal in {Delay}s",
-                        displayName, DisconnectDelay.TotalSeconds);
+                    if (!currentMappedNames.Contains(displayName) && !_pendingRemovals.ContainsKey(displayName))
+                    {
+                        _logger.LogInformation(
+                            "Monitor '{Monitor}' disappeared, scheduling removal in {Delay}s",
+                            displayName, DisconnectDelay.TotalSeconds);
 
-                    var capturedName = displayName; // capture for closure
-                    _pendingRemovals[capturedName] = new Timer(
-                        _ =>
-                        {
-                            if (_pendingRemovals.Remove(capturedName))
+                        var capturedName = displayName; // capture for closure
+                        _pendingRemovals[capturedName] = new Timer(
+                            _ =>
                             {
-                                _logger.LogInformation(
-                                    "Monitor '{Monitor}' still absent after delay, removing switch", capturedName);
-                                RemoveSwitch(capturedName);
-                            }
-                        },
-                        state: null,
-                        dueTime: DisconnectDelay,
-                        period: Timeout.InfiniteTimeSpan);
+                                lock (_lock)
+                                {
+                                    if (_pendingRemovals.Remove(capturedName))
+                                    {
+                                        _logger.LogInformation(
+                                            "Monitor '{Monitor}' still absent after delay, removing switch", capturedName);
+                                        RemoveSwitch(capturedName);
+                                    }
+                                }
+                            },
+                            state: null,
+                            dueTime: DisconnectDelay,
+                            period: Timeout.InfiniteTimeSpan);
+                    }
                 }
             }
         }
 
         private void HandleActiveMonitorsUpdated()
         {
-            var active = _displayWatcher.ActiveMonitors;
-
-            foreach (var (displayName, monitorSwitch) in _switches)
+            lock (_lock)
             {
-                // Check if the original name for this switch is in the active set
-                var originalName = _mappedToOriginalNames.GetValueOrDefault(displayName, displayName);
-                monitorSwitch.UpdateState(active.Contains(originalName));
+                var active = _displayWatcher.ActiveMonitors;
+
+                foreach (var (displayName, monitorSwitch) in _switches)
+                {
+                    // Check if the original name for this switch is in the active set
+                    var originalName = _mappedToOriginalNames.GetValueOrDefault(displayName, displayName);
+                    monitorSwitch.UpdateState(active.Contains(originalName));
+                }
             }
         }
 
@@ -200,9 +237,16 @@ namespace HADesktopAgent.Core.Display
             _displayWatcher.AvailableMonitorsUpdated -= HandleAvailableMonitorsUpdated;
             _displayWatcher.ActiveMonitorsUpdated -= HandleActiveMonitorsUpdated;
 
-            foreach (var timer in _pendingRemovals.Values)
-                timer.Dispose();
-            _pendingRemovals.Clear();
+            lock (_lock)
+            {
+                foreach (var timer in _pendingRemovals.Values)
+                    timer.Dispose();
+                _pendingRemovals.Clear();
+
+                foreach (var refreshRateSelect in _refreshRateSelects.Values)
+                    refreshRateSelect.Dispose();
+                _refreshRateSelects.Clear();
+            }
         }
     }
 }
