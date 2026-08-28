@@ -24,6 +24,8 @@ namespace HADesktopAgent.Core.Audio.Entity
         private readonly ILogger<AudioSelect> _logger;
         private readonly Dictionary<string, string> _audioNameMappings;
 
+        private readonly object _updateLock = new();
+
         private SortedSet<string> _audioDeviceNames = [];
         private string? _activeAudioDevice;
 
@@ -80,27 +82,39 @@ namespace HADesktopAgent.Core.Audio.Entity
 
         private void UpdateAudioDevices()
         {
-            var audioDevices = _audioManager.GetAudioDevices();
-            var audioDeviceNames = audioDevices.Select(m => GetDisplayName(m));
-            var activeAudioDevice = audioDevices.Find(m => m.IsActive);
-            var activeDisplayName = activeAudioDevice != null ? GetDisplayName(activeAudioDevice) : null;
-
-            if (!_audioDeviceNames.SetEquals(audioDeviceNames))
+            lock (_updateLock)
             {
-                _audioDeviceNames = [.. audioDeviceNames];
-                ConfigUpdated?.Invoke(this);
-            }
+                var audioDevices = _audioManager.GetAudioDevices();
+                var audioDeviceNames = audioDevices.Select(m => GetDisplayName(m));
+                var activeAudioDevice = audioDevices.Find(m => m.IsActive);
+                var activeDisplayName = activeAudioDevice != null ? GetDisplayName(activeAudioDevice) : null;
 
-            if (_activeAudioDevice != activeDisplayName)
-            {
-                _activeAudioDevice = activeDisplayName;
-                StateUpdated?.Invoke(this);
+                if (!_audioDeviceNames.SetEquals(audioDeviceNames))
+                {
+                    _audioDeviceNames = [.. audioDeviceNames];
+                    ConfigUpdated?.Invoke(this);
+                }
+
+                if (_activeAudioDevice != activeDisplayName)
+                {
+                    _activeAudioDevice = activeDisplayName;
+                    StateUpdated?.Invoke(this);
+                }
             }
         }
 
         private void AudioDevicesChanged(object? sender, EventArgs e)
         {
-            UpdateAudioDevices();
+            // Device-change notifications arrive on platform callback threads; an
+            // exception escaping here is lost and would leave the list stale forever.
+            try
+            {
+                UpdateAudioDevices();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to refresh audio devices after device change");
+            }
         }
 
         public void Dispose()

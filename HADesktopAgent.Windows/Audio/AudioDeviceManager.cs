@@ -5,6 +5,10 @@ namespace HADesktopAgent.Windows.Audio
 {
     public sealed class AudioDeviceManager : IAudioManager, IDisposable
     {
+        // Returned by GetDefaultAudioEndpoint when no default render endpoint exists,
+        // e.g. while HDMI audio endpoints churn during a display switch.
+        private const int E_NOTFOUND = unchecked((int)0x80070490);
+
         private readonly IMMDeviceEnumerator _enumerator;
         private readonly IMMNotificationClient _notificationClient;
         private readonly ILogger<AudioDeviceManager> _logger;
@@ -59,76 +63,79 @@ namespace HADesktopAgent.Windows.Audio
         public List<AudioDevice> GetAudioDevices()
         {
             var devices = new List<AudioDevice>();
-            var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
 
+            // Get default device ID; there may be no default endpoint at all
+            // (device churn, or zero active devices) — still enumerate what exists.
+            string? defaultId = null;
             try
             {
-                // Get default device ID
-                enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out var defaultDevice);
+                _enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out var defaultDevice);
                 defaultDevice.GetId(out var defaultIdPtr);
-                var defaultId = Marshal.PtrToStringUni(defaultIdPtr);
+                defaultId = Marshal.PtrToStringUni(defaultIdPtr);
                 Marshal.FreeCoTaskMem(defaultIdPtr);
                 Marshal.ReleaseComObject(defaultDevice);
+            }
+            catch (COMException e) when (e.HResult == E_NOTFOUND)
+            {
+                _logger.LogDebug("No default audio render endpoint currently exists");
+            }
 
-                // Enumerate all devices
-                enumerator.EnumerateAudioEndPoints(EDataFlow.eRender, DeviceState.Active, out var collection);
-                collection.GetCount(out int count);
+            // Enumerate all devices
+            _enumerator.EnumerateAudioEndPoints(EDataFlow.eRender, DeviceState.Active, out var collection);
+            collection.GetCount(out int count);
 
-                for (int i = 0; i < count; i++)
+            for (int i = 0; i < count; i++)
+            {
+                collection.Item(i, out var device);
+
+                // Get device ID
+                device.GetId(out var deviceIdPtr);
+                var deviceId = Marshal.PtrToStringUni(deviceIdPtr) ?? "Unknown";
+                Marshal.FreeCoTaskMem(deviceIdPtr);
+
+                // Get device friendly name
+                device.OpenPropertyStore(0, out var props);
+                var friendlyNameKey = new PropertyKey
                 {
-                    collection.Item(i, out var device);
+                    fmtid = new Guid(0xa45c254e, 0xdf1c, 0x4efd, 0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0),
+                    pid = 14
+                };
+                props.GetValue(ref friendlyNameKey, out var friendlyNameValue);
+                string friendlyName = Marshal.PtrToStringUni(friendlyNameValue.pwszVal) ?? "Unknown Device";
+                PropVariantClear(ref friendlyNameValue);
 
-                    // Get device ID
-                    device.GetId(out var deviceIdPtr);
-                    var deviceId = Marshal.PtrToStringUni(deviceIdPtr) ?? "Unknown";
-                    Marshal.FreeCoTaskMem(deviceIdPtr);
+                // Get device interface friendly name
+                var interfaceKey = new PropertyKey
+                {
+                    fmtid = new Guid(0x026e516e, 0xb814, 0x414b, 0x83, 0xcd, 0x85, 0x6d, 0x6f, 0xef, 0x48, 0x22),
+                    pid = 2
+                };
+                props.GetValue(ref interfaceKey, out var interfaceValue);
+                var deviceName = Marshal.PtrToStringUni(interfaceValue.pwszVal) ?? "";
+                PropVariantClear(ref interfaceValue);
 
-                    // Get device friendly name
-                    device.OpenPropertyStore(0, out var props);
-                    var friendlyNameKey = new PropertyKey
-                    {
-                        fmtid = new Guid(0xa45c254e, 0xdf1c, 0x4efd, 0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0),
-                        pid = 14
-                    };
-                    props.GetValue(ref friendlyNameKey, out var friendlyNameValue);
-                    string friendlyName = Marshal.PtrToStringUni(friendlyNameValue.pwszVal) ?? "Unknown Device";
-
-                    // Get device interface friendly name
-                    var interfaceKey = new PropertyKey
-                    {
-                        fmtid = new Guid(0x026e516e, 0xb814, 0x414b, 0x83, 0xcd, 0x85, 0x6d, 0x6f, 0xef, 0x48, 0x22),
-                        pid = 2
-                    };
-                    props.GetValue(ref interfaceKey, out var interfaceValue);
-                    var deviceName = Marshal.PtrToStringUni(interfaceValue.pwszVal) ?? "";
-
-                    // Parse out the user-friendly name
-                    string userFriendlyName = friendlyName;
-                    int parenIndex = friendlyName.LastIndexOf('(');
-                    if (parenIndex > 0)
-                    {
-                        userFriendlyName = friendlyName.Substring(0, parenIndex).Trim();
-                    }
-
-                    devices.Add(new AudioDevice
-                    {
-                        Id = deviceId,
-                        FriendlyName = friendlyName,
-                        UserFriendlyName = userFriendlyName,
-                        DeviceName = deviceName,
-                        IsActive = deviceId == defaultId
-                    });
-
-                    Marshal.ReleaseComObject(props);
-                    Marshal.ReleaseComObject(device);
+                // Parse out the user-friendly name
+                string userFriendlyName = friendlyName;
+                int parenIndex = friendlyName.LastIndexOf('(');
+                if (parenIndex > 0)
+                {
+                    userFriendlyName = friendlyName.Substring(0, parenIndex).Trim();
                 }
 
-                Marshal.ReleaseComObject(collection);
+                devices.Add(new AudioDevice
+                {
+                    Id = deviceId,
+                    FriendlyName = friendlyName,
+                    UserFriendlyName = userFriendlyName,
+                    DeviceName = deviceName,
+                    IsActive = deviceId == defaultId
+                });
+
+                Marshal.ReleaseComObject(props);
+                Marshal.ReleaseComObject(device);
             }
-            finally
-            {
-                Marshal.ReleaseComObject(enumerator);
-            }
+
+            Marshal.ReleaseComObject(collection);
 
             return devices;
         }
@@ -148,6 +155,9 @@ namespace HADesktopAgent.Windows.Audio
                 Marshal.ReleaseComObject(policyConfig);
             }
         }
+
+        [DllImport("ole32.dll")]
+        private static extern int PropVariantClear(ref PropVariant pv);
 
         public void Dispose()
         {

@@ -208,9 +208,21 @@ namespace HADesktopAgent.Core.Mqtt
 
         private async void PowerState_OnSuspend()
         {
-            _shouldStayConnected = false;
-            await PublishAsync(_statusTopic, HA_STATUS_OFFLINE, true);
-            await _mqttClient.TryDisconnectAsync();
+            // async void: any exception escaping here is unhandled and kills the
+            // process, and PublishAsync throws when the client is not connected.
+            try
+            {
+                _shouldStayConnected = false;
+                if (_mqttClient.IsConnected)
+                {
+                    await PublishAsync(_statusTopic, HA_STATUS_OFFLINE, true);
+                }
+                await _mqttClient.TryDisconnectAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to publish offline status on suspend");
+            }
         }
 
         public void Dispose()
