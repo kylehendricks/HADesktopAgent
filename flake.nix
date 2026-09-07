@@ -93,7 +93,9 @@
               };
 
               Service = {
-                Type = "simple";
+                # AddSystemd() in Program.cs sends the readiness ping, so systemd can wait
+                # for the agent to actually be up rather than just forked.
+                Type = "notify";
                 ExecStart = lib.getExe cfg.package;
                 Restart = "on-failure";
                 RestartSec = 5;

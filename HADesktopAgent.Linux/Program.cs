@@ -100,7 +100,21 @@ builder.Services.AddLogging(loggingBuilder =>
 {
     loggingBuilder.ClearProviders();
     loggingBuilder.AddSerilog(Log.Logger, dispose: true);
+
+    // Serilog owns the rolling file log. The console provider exists so the journal
+    // gets something too: AddSystemd below swaps its formatter for one that prefixes
+    // the syslog level, which is what gives journalctl real priorities. In dev mode
+    // Serilog is already writing to stderr, so a second provider would just double up.
+    if (!devMode)
+    {
+        loggingBuilder.AddConsole();
+    }
 });
+
+// No-op unless the process really is a systemd service (checks INVOCATION_ID), so
+// this is safe in dev mode and when run by hand. Under systemd it supplies the
+// Type=notify readiness ping and the journal log formatter.
+builder.Services.AddSystemd();
 
 builder.Services.AddSingleton<IPowerState, LogindPowerState>();
 builder.Services.AddSingleton<IDisplayWatcher, KScreenDisplayWatcher>();
@@ -118,7 +132,10 @@ builder.Services.AddSingleton(sp =>
     return new MqttHaManager(logger, mqttManager, mqttConfig.DiscoveryPrefix, "ha_desktop_agent", agentConfig.DeviceId, agentConfig.DeviceName);
 });
 
-var host = builder.Build();
+// Disposed so DI singletons are too: PulseAudioManager kills its `pactl subscribe`
+// child from Dispose, and the dev path below does not go through RunAsync, which
+// would otherwise dispose the host for us.
+using var host = builder.Build();
 
 try
 {

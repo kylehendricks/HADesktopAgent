@@ -4,7 +4,7 @@ PartOf=graphical-session.target
 After=plasma-core.target graphical-session.target
 
 [Service]
-Type=simple
+Type=notify
 ExecStart=%h/.local/share/HADesktopAgent/HADesktopAgent.Linux
 Restart=on-failure
 RestartSec=5
