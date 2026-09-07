@@ -105,6 +105,7 @@ builder.Services.AddLogging(loggingBuilder =>
 builder.Services.AddSingleton<IPowerState, LogindPowerState>();
 builder.Services.AddSingleton<IDisplayWatcher, KScreenDisplayWatcher>();
 builder.Services.AddSingleton<IMonitorSwitcher, KScreenMonitorSwitcher>();
+builder.Services.AddSingleton<IRefreshRateController, KScreenRefreshRateController>();
 builder.Services.AddSingleton<IAudioManager, PulseAudioManager>();
 builder.Services.AddSingleton<ISleepControl>(new SystemdSleepControl());
 builder.Services.AddSingleton<MqttManager>();
