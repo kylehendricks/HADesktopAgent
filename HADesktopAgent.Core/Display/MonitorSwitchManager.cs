@@ -1,5 +1,5 @@
 using HADesktopAgent.Core.Display.Entity;
-using HADesktopAgent.Core.Mqtt;
+using HADesktopAgent.Core.Entity;
 using Microsoft.Extensions.Logging;
 
 namespace HADesktopAgent.Core.Display
@@ -11,7 +11,7 @@ namespace HADesktopAgent.Core.Display
         private readonly ILogger<MonitorSwitchManager> _logger;
         private readonly IDisplayWatcher _displayWatcher;
         private readonly IMonitorSwitcher _monitorSwitcher;
-        private readonly MqttHaManager _mqttHaManager;
+        private readonly IHaEntityHost _entityHost;
         private readonly ILoggerFactory _loggerFactory;
         private readonly Dictionary<string, string> _monitorNameMappings;
         private readonly IRefreshRateController? _refreshRateController;
@@ -41,7 +41,7 @@ namespace HADesktopAgent.Core.Display
             ILoggerFactory loggerFactory,
             IDisplayWatcher displayWatcher,
             IMonitorSwitcher monitorSwitcher,
-            MqttHaManager mqttHaManager,
+            IHaEntityHost entityHost,
             Dictionary<string, string>? monitorNameMappings = null,
             IRefreshRateController? refreshRateController = null)
         {
@@ -49,7 +49,7 @@ namespace HADesktopAgent.Core.Display
             _loggerFactory = loggerFactory;
             _displayWatcher = displayWatcher;
             _monitorSwitcher = monitorSwitcher;
-            _mqttHaManager = mqttHaManager;
+            _entityHost = entityHost;
             _monitorNameMappings = monitorNameMappings ?? new();
             _refreshRateController = refreshRateController;
 
@@ -128,7 +128,7 @@ namespace HADesktopAgent.Core.Display
                 _mappedToOriginalNames);
 
             _switches[displayName] = monitorSwitch;
-            _ = _mqttHaManager.RegisterEntity(monitorSwitch);
+            _ = _entityHost.RegisterEntity(monitorSwitch);
             _logger.LogInformation("Registered monitor switch for '{Monitor}' (original: '{OriginalName}')", displayName, originalMonitorName);
 
             if (_refreshRateController != null)
@@ -141,7 +141,7 @@ namespace HADesktopAgent.Core.Display
                     _displayWatcher);
 
                 _refreshRateSelects[displayName] = refreshRateSelect;
-                _ = _mqttHaManager.RegisterEntity(refreshRateSelect);
+                _ = _entityHost.RegisterEntity(refreshRateSelect);
                 _logger.LogInformation("Registered refresh rate select for '{Monitor}'", displayName);
             }
         }
@@ -152,13 +152,13 @@ namespace HADesktopAgent.Core.Display
                 return;
 
             _mappedToOriginalNames.Remove(displayName);
-            _ = _mqttHaManager.UnregisterEntity(monitorSwitch);
+            _ = _entityHost.UnregisterEntity(monitorSwitch);
             _logger.LogInformation("Unregistered monitor switch for '{Monitor}'", displayName);
 
             if (_refreshRateSelects.Remove(displayName, out var refreshRateSelect))
             {
                 refreshRateSelect.Dispose();
-                _ = _mqttHaManager.UnregisterEntity(refreshRateSelect);
+                _ = _entityHost.UnregisterEntity(refreshRateSelect);
             }
         }
 

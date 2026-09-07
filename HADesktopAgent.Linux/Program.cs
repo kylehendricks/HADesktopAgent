@@ -5,18 +5,22 @@ using HADesktopAgent.Linux.Sleep;
 using Microsoft.Extensions.Logging;
 using HADesktopAgent.Core;
 using HADesktopAgent.Core.Audio;
-using HADesktopAgent.Core.Audio.Entity;
+using HADesktopAgent.Core.Dev;
 using HADesktopAgent.Core.Display;
-using HADesktopAgent.Core.Display.Entity;
 using HADesktopAgent.Core.Mqtt;
 using HADesktopAgent.Core.PowerState;
 using HADesktopAgent.Core.Process;
-using HADesktopAgent.Core.Process.Entity;
 using HADesktopAgent.Core.Sleep;
-using HADesktopAgent.Core.Sleep.Entity;
 using Microsoft.Extensions.Options;
 using Serilog;
+using Serilog.Events;
 using System.Text.Json;
+
+// Dev mode runs the whole entity graph with no broker: see what is detected, watch
+// state change live, and drive commands by hand. Stripped from args before the host
+// builder sees them, which only understands --key=value pairs.
+var devMode = args.Any(a => a is "--dev" or "-d");
+args = [.. args.Where(a => a is not ("--dev" or "-d"))];
 
 var appDataPath = Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -40,15 +44,24 @@ if (!File.Exists(configPath))
     File.WriteAllText(configPath, json);
 }
 
-Log.Logger = new LoggerConfiguration()
+var loggerConfiguration = new LoggerConfiguration()
     .MinimumLevel.Debug()
     .WriteTo.File(
         logPath,
         rollingInterval: RollingInterval.Day,
         retainedFileCountLimit: 7,
         shared: true,
-        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
-    .CreateLogger();
+        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}] {Message:lj}{NewLine}{Exception}");
+
+if (devMode)
+{
+    // Everything to stderr so the REPL on stdout stays readable (`2>/dev/null`).
+    loggerConfiguration.WriteTo.Console(
+        standardErrorFromLevel: LogEventLevel.Verbose,
+        outputTemplate: "{Timestamp:HH:mm:ss} [{Level:u3}] {Message:lj}{NewLine}{Exception}");
+}
+
+Log.Logger = loggerConfiguration.CreateLogger();
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -110,65 +123,43 @@ try
 {
     Log.Information("HA Desktop Agent starting...");
 
-    var mqttHaManager = host.Services.GetRequiredService<MqttHaManager>();
-    var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
-    var displayWatcher = host.Services.GetRequiredService<IDisplayWatcher>();
-    var monitorSwitcher = host.Services.GetRequiredService<IMonitorSwitcher>();
-    var audioManager = host.Services.GetRequiredService<IAudioManager>();
-    var sleepControl = host.Services.GetRequiredService<ISleepControl>();
-    var processSwitchConfig = host.Services.GetRequiredService<IOptions<List<ProcessSwitchConfiguration>>>();
-    var nameMappingConfig = host.Services.GetRequiredService<IOptions<NameMappingConfiguration>>().Value;
-
-    // Log discovered monitor identifiers to help users configure name mappings
-    foreach (var (name, info) in displayWatcher.MonitorDetails)
+    if (devMode)
     {
-        Log.Information("Discovered monitor: '{Name}' (EDID: {EdidId})", name, info.EdidIdentifier ?? "unavailable");
+        var agentConfig = host.Services.GetRequiredService<IOptions<AgentConfiguration>>().Value;
+        var mqttConfig = host.Services.GetRequiredService<IOptions<MqttConfiguration>>().Value;
+
+        // MqttManager starts its reconnect loop from its constructor, so simply never
+        // resolving it (or MqttHaManager) is what keeps dev mode off the network.
+        using var consoleHost = new ConsoleHaHost(
+            mqttConfig.DiscoveryPrefix,
+            "ha_desktop_agent",
+            mqttConfig.StatusTopic,
+            agentConfig.DeviceId,
+            agentConfig.DeviceName);
+
+        await host.StartAsync();
+        using var entities = await AgentEntityBuilder.BuildAsync(host.Services, consoleHost);
+
+        await new DevConsole(consoleHost, host.Services).RunAsync(host.Services
+            .GetRequiredService<IHostApplicationLifetime>().ApplicationStopping);
+
+        await host.StopAsync();
     }
-
-    // Register per-monitor switch entities (with name mappings)
-    var monitorSwitchManager = new MonitorSwitchManager(
-        loggerFactory.CreateLogger<MonitorSwitchManager>(),
-        loggerFactory,
-        displayWatcher,
-        monitorSwitcher,
-        mqttHaManager,
-        nameMappingConfig.Monitors);
-
-    // Register display configuration API (shares the live mapped-name dictionary from the monitor switch manager)
-    var displayConfigApi = new DisplayConfigurationApi(
-        loggerFactory.CreateLogger<DisplayConfigurationApi>(),
-        displayWatcher,
-        monitorSwitcher,
-        monitorSwitchManager.MappedToOriginalNames);
-    await mqttHaManager.RegisterApi(displayConfigApi);
-
-    // Register audio select entity (with name mappings)
-    var audioSelect = new AudioSelect(loggerFactory.CreateLogger<AudioSelect>(), audioManager, nameMappingConfig.AudioDevices);
-    await mqttHaManager.RegisterEntity(audioSelect);
-
-    // Register sleep button entity
-    var sleepButton = new SleepButton(sleepControl);
-    await mqttHaManager.RegisterEntity(sleepButton);
-
-    // Register process switch entities
-    foreach (var config in processSwitchConfig.Value)
+    else
     {
-        var processSwitch = new ProcessSwitch(
-            loggerFactory.CreateLogger<ProcessSwitch>(),
-            config.PrettyName,
-            config.Name,
-            config.Icon,
-            config.ApplicationPath,
-            config.StartArgument,
-            config.StopArgument);
-        await mqttHaManager.RegisterEntity(processSwitch);
-    }
+        var mqttHaManager = host.Services.GetRequiredService<MqttHaManager>();
+        using var entities = await AgentEntityBuilder.BuildAsync(host.Services, mqttHaManager);
 
-    await host.RunAsync();
+        await host.RunAsync();
+    }
 }
 catch (Exception ex)
 {
     Log.Fatal(ex, "Application terminated unexpectedly");
+
+    // Non-zero so systemd's Restart=on-failure actually fires; falling off the end
+    // here would exit 0 and leave the unit dead after a crash.
+    Environment.ExitCode = 1;
 }
 finally
 {

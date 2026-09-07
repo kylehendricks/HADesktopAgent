@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 namespace HADesktopAgent.Core.Mqtt
 {
 
-    public class MqttHaManager : IDisposable
+    public class MqttHaManager : IDisposable, IHaEntityHost
     {
         private readonly ILogger<MqttHaManager> _logger;
         private readonly MqttManager _mqttManager;

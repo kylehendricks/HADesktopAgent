@@ -1,14 +1,5 @@
 using HADesktopAgent.Core;
-using HADesktopAgent.Core.Audio;
-using HADesktopAgent.Core.Audio.Entity;
-using HADesktopAgent.Core.Display;
-using HADesktopAgent.Core.Display.Entity;
 using HADesktopAgent.Core.Mqtt;
-using HADesktopAgent.Core.Process;
-using HADesktopAgent.Core.Process.Entity;
-using HADesktopAgent.Core.Sleep;
-using HADesktopAgent.Core.Sleep.Entity;
-using Microsoft.Extensions.Options;
 
 namespace HADesktopAgent.Windows
 {
@@ -17,11 +8,8 @@ namespace HADesktopAgent.Windows
         private readonly NotifyIcon _trayIcon;
         private readonly IHost _host;
 
-        // Entity references for state communication
-        private MonitorSwitchManager? _monitorSwitchManager;
-        private AudioSelect? _audioSelect;
-        private List<ProcessSwitch> _processSwitches = new();
-        private SleepButton? _sleepButton;
+        // Entity references, kept for the lifetime of the tray app
+        private AgentEntities? _entities;
 
         public TrayApplicationContext(IHost host)
         {
@@ -44,63 +32,8 @@ namespace HADesktopAgent.Windows
         {
             await _host.StartAsync();
 
-            // Get services from DI container
             var mqttHaManager = _host.Services.GetRequiredService<MqttHaManager>();
-            var displayWatcher = _host.Services.GetRequiredService<IDisplayWatcher>();
-            var monitorSwitcher = _host.Services.GetRequiredService<IMonitorSwitcher>();
-            var refreshRateController = _host.Services.GetRequiredService<IRefreshRateController>();
-            var audioManager = _host.Services.GetRequiredService<IAudioManager>();
-            var sleepControl = _host.Services.GetRequiredService<ISleepControl>();
-            var loggerFactory = _host.Services.GetRequiredService<ILoggerFactory>();
-            var processSwitchConfig = _host.Services.GetRequiredService<IOptions<List<ProcessSwitchConfiguration>>>();
-            var nameMappingConfig = _host.Services.GetRequiredService<IOptions<NameMappingConfiguration>>().Value;
-
-            // Log discovered monitor identifiers to help users configure name mappings
-            var startupLogger = loggerFactory.CreateLogger<TrayApplicationContext>();
-            foreach (var (name, info) in displayWatcher.MonitorDetails)
-            {
-                startupLogger.LogInformation("Discovered monitor: '{Name}' (EDID: {EdidId})", name, info.EdidIdentifier ?? "unavailable");
-            }
-
-            // Create per-monitor switch entities (with name mappings)
-            _monitorSwitchManager = new MonitorSwitchManager(
-                loggerFactory.CreateLogger<MonitorSwitchManager>(),
-                loggerFactory,
-                displayWatcher,
-                monitorSwitcher,
-                mqttHaManager,
-                nameMappingConfig.Monitors,
-                refreshRateController);
-
-            // Register display configuration API (shares the live mapped-name dictionary from the monitor switch manager)
-            var displayConfigApi = new DisplayConfigurationApi(
-                loggerFactory.CreateLogger<DisplayConfigurationApi>(),
-                displayWatcher,
-                monitorSwitcher,
-                _monitorSwitchManager.MappedToOriginalNames);
-            await mqttHaManager.RegisterApi(displayConfigApi);
-
-            // Register audio select entity (with name mappings)
-            _audioSelect = new AudioSelect(loggerFactory.CreateLogger<AudioSelect>(), audioManager, nameMappingConfig.AudioDevices);
-            await mqttHaManager.RegisterEntity(_audioSelect);
-
-            // Create ProcessSwitch instances from configuration
-            foreach (var config in processSwitchConfig.Value)
-            {
-                var processSwitch = new ProcessSwitch(
-                    loggerFactory.CreateLogger<ProcessSwitch>(),
-                    config.PrettyName,
-                    config.Name,
-                    config.Icon,
-                    config.ApplicationPath,
-                    config.StartArgument,
-                    config.StopArgument);
-                _processSwitches.Add(processSwitch);
-                await mqttHaManager.RegisterEntity(processSwitch);
-            }
-
-            _sleepButton = new SleepButton(sleepControl);
-            await mqttHaManager.RegisterEntity(_sleepButton);
+            _entities = await AgentEntityBuilder.BuildAsync(_host.Services, mqttHaManager);
         }
 
         private ContextMenuStrip CreateContextMenu()
@@ -176,6 +109,7 @@ namespace HADesktopAgent.Windows
         {
             if (disposing)
             {
+                _entities?.Dispose();
                 _trayIcon?.Dispose();
                 _host?.Dispose();
             }
