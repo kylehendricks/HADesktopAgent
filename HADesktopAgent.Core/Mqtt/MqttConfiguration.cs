@@ -11,6 +11,13 @@ namespace HADesktopAgent.Core.Mqtt
 
         public string Password { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Path to a file whose contents are the password, read at startup and used in place
+        /// of <see cref="Password"/>. Lets a generated config.json carry the path instead of
+        /// the secret itself. A single trailing newline is stripped.
+        /// </summary>
+        public string? PasswordFile { get; set; }
+
         [Required(ErrorMessage = "MQTT Status topic is required")]
         public string StatusTopic { get; set; } = "ha_desktop_agent/status";
 

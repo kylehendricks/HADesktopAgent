@@ -8,37 +8,23 @@ using HADesktopAgent.Core.Audio;
 using HADesktopAgent.Core.Display;
 using HADesktopAgent.Core.Mqtt;
 using HADesktopAgent.Core.PowerState;
-using HADesktopAgent.Core.Process;
 using HADesktopAgent.Core.Sleep;
 using Microsoft.Extensions.Options;
 using Serilog;
-using System.Text.Json;
 
 Application.EnableVisualStyles();
 Application.SetCompatibleTextRenderingDefault(false);
 Application.SetHighDpiMode(HighDpiMode.SystemAware);
 
-var appDataPath = Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-    "HADesktopAgent");
+// Config location, highest precedence first: --config <path>, %HADESKTOPAGENT_CONFIG%,
+// then the user-managed default under LocalApplicationData. Only the default is
+// created if missing.
+var (configPath, hostArgs) = AgentConfigurationSetup.ResolveConfigPath(args);
+args = hostArgs;
 
-var logPath = Path.Combine(appDataPath, "logs", "app-.log");
-var configPath = Path.Combine(appDataPath, "config.json");
+AgentConfigurationSetup.EnsureDefaultConfig(configPath);
 
-// Create default config if it doesn't exist
-if (!File.Exists(configPath))
-{
-    Directory.CreateDirectory(appDataPath);
-    var defaultConfig = new
-    {
-        Agent = new AgentConfiguration(),
-        Mqtt = new MqttConfiguration(),
-        ProcessSwitches = Array.Empty<ProcessSwitchConfiguration>(),
-        NameMappings = new NameMappingConfiguration()
-    };
-    var json = JsonSerializer.Serialize(defaultConfig, new JsonSerializerOptions { WriteIndented = true });
-    File.WriteAllText(configPath, json);
-}
+var logPath = AgentConfigurationSetup.LogPath;
 
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Debug()
@@ -52,36 +38,8 @@ Log.Logger = new LoggerConfiguration()
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// Add user config from AppData
-builder.Configuration.AddJsonFile(configPath, optional: false, reloadOnChange: true);
-
-// Configure Agent options with validation
-builder.Services.AddOptions<AgentConfiguration>()
-    .Bind(builder.Configuration.GetSection("Agent"))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
-
-// Configure MQTT options with validation
-builder.Services.AddOptions<MqttConfiguration>()
-    .Bind(builder.Configuration.GetSection("Mqtt"))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
-
-// Register custom validator
-builder.Services.AddSingleton<IValidateOptions<MqttConfiguration>, MqttConfigurationValidator>();
-
-// Configure ProcessSwitch options with validation
-builder.Services.AddOptions<List<ProcessSwitchConfiguration>>()
-    .Bind(builder.Configuration.GetSection("ProcessSwitches"))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
-
-// Register custom validator
-builder.Services.AddSingleton<IValidateOptions<List<ProcessSwitchConfiguration>>, ProcessSwitchConfigurationValidator>();
-
-// Configure NameMapping options
-builder.Services.AddOptions<NameMappingConfiguration>()
-    .Bind(builder.Configuration.GetSection("NameMappings"));
+// Binds and validates every config section, and resolves Mqtt.PasswordFile.
+builder.AddAgentConfiguration(configPath);
 
 builder.Services.AddLogging(loggingBuilder =>
 {

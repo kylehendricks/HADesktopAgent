@@ -9,12 +9,10 @@ using HADesktopAgent.Core.Dev;
 using HADesktopAgent.Core.Display;
 using HADesktopAgent.Core.Mqtt;
 using HADesktopAgent.Core.PowerState;
-using HADesktopAgent.Core.Process;
 using HADesktopAgent.Core.Sleep;
 using Microsoft.Extensions.Options;
 using Serilog;
 using Serilog.Events;
-using System.Text.Json;
 
 // Dev mode runs the whole entity graph with no broker: see what is detected, watch
 // state change live, and drive commands by hand. Stripped from args before the host
@@ -22,27 +20,15 @@ using System.Text.Json;
 var devMode = args.Any(a => a is "--dev" or "-d");
 args = [.. args.Where(a => a is not ("--dev" or "-d"))];
 
-var appDataPath = Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-    "HADesktopAgent");
+// Config location, highest precedence first: --config <path>, $HADESKTOPAGENT_CONFIG,
+// then the user-managed default under LocalApplicationData. A configuration manager
+// points the first two at a file it generates; only the default is created if missing.
+var (configPath, hostArgs) = AgentConfigurationSetup.ResolveConfigPath(args);
+args = hostArgs;
 
-var logPath = Path.Combine(appDataPath, "logs", "app-.log");
-var configPath = Path.Combine(appDataPath, "config.json");
+AgentConfigurationSetup.EnsureDefaultConfig(configPath);
 
-// Create default config if it doesn't exist
-if (!File.Exists(configPath))
-{
-    Directory.CreateDirectory(appDataPath);
-    var defaultConfig = new
-    {
-        Agent = new AgentConfiguration(),
-        Mqtt = new MqttConfiguration(),
-        ProcessSwitches = Array.Empty<ProcessSwitchConfiguration>(),
-        NameMappings = new NameMappingConfiguration()
-    };
-    var json = JsonSerializer.Serialize(defaultConfig, new JsonSerializerOptions { WriteIndented = true });
-    File.WriteAllText(configPath, json);
-}
+var logPath = AgentConfigurationSetup.LogPath;
 
 var loggerConfiguration = new LoggerConfiguration()
     .MinimumLevel.Debug()
@@ -65,36 +51,8 @@ Log.Logger = loggerConfiguration.CreateLogger();
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// Add user config from AppData
-builder.Configuration.AddJsonFile(configPath, optional: false, reloadOnChange: true);
-
-// Configure Agent options with validation
-builder.Services.AddOptions<AgentConfiguration>()
-    .Bind(builder.Configuration.GetSection("Agent"))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
-
-// Configure MQTT options with validation
-builder.Services.AddOptions<MqttConfiguration>()
-    .Bind(builder.Configuration.GetSection("Mqtt"))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
-
-// Register custom validator
-builder.Services.AddSingleton<IValidateOptions<MqttConfiguration>, MqttConfigurationValidator>();
-
-// Configure ProcessSwitch options with validation
-builder.Services.AddOptions<List<ProcessSwitchConfiguration>>()
-    .Bind(builder.Configuration.GetSection("ProcessSwitches"))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
-
-// Register custom validator
-builder.Services.AddSingleton<IValidateOptions<List<ProcessSwitchConfiguration>>, ProcessSwitchConfigurationValidator>();
-
-// Configure NameMapping options
-builder.Services.AddOptions<NameMappingConfiguration>()
-    .Bind(builder.Configuration.GetSection("NameMappings"));
+// Binds and validates every config section, and resolves Mqtt.PasswordFile.
+builder.AddAgentConfiguration(configPath);
 
 builder.Services.AddLogging(loggingBuilder =>
 {

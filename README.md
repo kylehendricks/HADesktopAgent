@@ -69,6 +69,8 @@ On first run the agent creates a default config file:
 | `Agent` | `DeviceName` | Friendly name shown in Home Assistant's device registry |
 | `Mqtt` | `Host` | MQTT broker hostname or IP |
 | `Mqtt` | `Username` / `Password` | Broker credentials (leave empty if unauthenticated) |
+| `Mqtt` | `PasswordFile` | Path to a file holding the password, read at startup instead of `Password`. Keeps the secret out of a generated config file (see [Nix](#nix--home-manager)) |
+| `Mqtt` | `StatusTopic` | Topic carrying the agent's online/offline status (default: `ha_desktop_agent/status`) |
 | `Mqtt` | `DiscoveryPrefix` | MQTT discovery prefix (default: `homeassistant` — must match Home Assistant's setting) |
 | `ProcessSwitches` | `Name` | Entity ID suffix (e.g. `vlc` becomes `switch.ha_agent_vlc`) |
 | `ProcessSwitches` | `PrettyName` | Display name in Home Assistant |
@@ -78,6 +80,27 @@ On first run the agent creates a default config file:
 | `ProcessSwitches` | `StopArgument` | Optional CLI args for graceful stop (omit to kill process) |
 | `NameMappings` | `Monitors` | Map of identifier → custom name for monitors (see [Name Mappings](#name-mappings)) |
 | `NameMappings` | `AudioDevices` | Map of device name → custom name for audio devices (see [Name Mappings](#name-mappings)) |
+
+### Config File Location
+
+The agent reads, in order of precedence:
+
+1. `--config <path>` on the command line
+2. `$HADESKTOPAGENT_CONFIG`
+3. the default user-managed path above
+
+Only the default path is created on first run — a path you supply explicitly is expected
+to exist, so a typo fails loudly instead of starting with defaults that reach no broker.
+
+Any setting can also be overridden by an environment variable using `__` as the section
+separator, and the environment wins over the file:
+
+```bash
+Mqtt__Password=hunter2 Mqtt__Host=homeassistant.lan HADesktopAgent.Linux
+```
+
+This is how a broker password can reach the agent from a systemd `EnvironmentFile=` or
+`LoadCredential=` without ever being written into config.json.
 
 ## Name Mappings
 
@@ -109,9 +132,86 @@ To uninstall:
 ./uninstall.sh
 ```
 
+### Nix / Home Manager
+
+The flake ships a package and a Home Manager module that manages the systemd user
+service *and* the whole config file:
+
+```nix
+{
+  inputs.hadesktopagent.url = "github:kylehendricks/HADesktopAgent";
+
+  # ... in your Home Manager configuration:
+  imports = [ inputs.hadesktopagent.homeManagerModules.default ];
+
+  services.hadesktopagent = {
+    enable = true;
+
+    settings = {
+      Agent = {
+        DeviceId = "living_room_pc";
+        DeviceName = "Living Room PC";
+      };
+
+      Mqtt = {
+        Host = "homeassistant.lan";
+        Username = "desktop-agent";
+        PasswordFile = config.sops.secrets.mqtt-password.path;
+      };
+
+      ProcessSwitches = [{
+        Name = "steam";
+        PrettyName = "Steam Big Picture";
+        Icon = "mdi:steam";
+        ApplicationPath = lib.getExe pkgs.steam;
+        StartArgument = "-gamepadui";
+        StopArgument = "-shutdown";
+      }];
+
+      NameMappings.Monitors."SAM-7796-HNTXA00720" = "Living Room TV";
+    };
+  };
+}
+```
+
+`settings` is rendered to JSON and passed to the agent as `--config`, so nothing is
+written into `~/.local/share/HADesktopAgent/` except the logs. Keys mirror config.json
+exactly; the common ones are typed (a typo is a build error) and anything else passes
+straight through.
+
+#### Passwords
+
+The generated config lands in `/nix/store`, which is world-readable, so the broker
+password must not be part of it. Use `Mqtt.PasswordFile` instead — it stores only the
+*path*, and the agent reads the file at startup:
+
+- with [sops-nix](https://github.com/Mic92/sops-nix) or [agenix](https://github.com/ryantm/agenix): `PasswordFile = config.sops.secrets.mqtt-password.path;`
+- by hand: write the password to a file and `chmod 600` it
+
+Setting `Mqtt.Password` in plain text still works but emits a build warning, and pointing
+`PasswordFile` at a store path is a build error.
+
+If you would rather keep managing config.json yourself, set `configFile = null;` and the
+agent falls back to `$XDG_DATA_HOME/HADesktopAgent/config.json` as usual.
+
+#### Development
+
+```bash
+nix develop                      # dotnet SDK + pactl, kscreen-doctor, edid-decode
+nix build .#hadesktopagent
+```
+
+After changing a `PackageReference`, refresh the pinned NuGet lock:
+
+```bash
+nix build .#hadesktopagent.fetch-deps
+./result "$PWD/nuget-deps.json"
+```
+
 ### Windows
 
 From the `HADesktopAgent.Windows/` directory:
+
 
 ```powershell
 .\install-tray-app.ps1
