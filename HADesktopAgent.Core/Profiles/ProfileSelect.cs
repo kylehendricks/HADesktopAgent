@@ -199,7 +199,8 @@ namespace HADesktopAgent.Core.Profiles
             if (!string.IsNullOrWhiteSpace(profile.Audio))
             {
                 var audio = profile.Audio;
-                steps.Add(new FollowUpStep($"audio output '{audio}'", () => SetAudio(audio)));
+                var confirmations = 0;
+                steps.Add(new FollowUpStep($"audio output '{audio}'", () => SetAudio(audio, ref confirmations)));
             }
 
             if (profile.RefreshRates.Count > 0 && _refreshRateController == null)
@@ -217,19 +218,30 @@ namespace HADesktopAgent.Core.Profiles
             return steps;
         }
 
-        private StepResult SetAudio(string audioName)
+        /// <summary>
+        /// Switching displays makes the GPU's HDMI audio device re-probe, which removes
+        /// and recreates its sinks a moment later. A default set in that window is lost,
+        /// so the output only counts as switched once it has stayed the default for
+        /// <see cref="AudioConfirmations"/> consecutive checks.
+        /// </summary>
+        private const int AudioConfirmations = 3;
+
+        private StepResult SetAudio(string audioName, ref int confirmations)
         {
             var device = _audioManager.GetAudioDevices().Find(d => _audioNames.Resolve(d) == audioName);
             if (device == null)
-                return StepResult.Retry;
-
-            if (!device.IsActive)
             {
-                _logger.LogInformation("Setting audio output to '{Audio}'", audioName);
-                _audioManager.SetActiveDevice(device.Id);
+                confirmations = 0;
+                return StepResult.Retry;
             }
 
-            return StepResult.Done;
+            if (device.IsActive)
+                return ++confirmations >= AudioConfirmations ? StepResult.Done : StepResult.Retry;
+
+            confirmations = 0;
+            _logger.LogInformation("Setting audio output to '{Audio}'", audioName);
+            _audioManager.SetActiveDevice(device.Id);
+            return StepResult.Retry;
         }
 
         private StepResult SetRefreshRate(string profileName, string monitor, int rate)
