@@ -79,11 +79,13 @@ Core defines interfaces (e.g., `IMonitorSwitcher`, `IAudioDeviceManager`, `ISlee
 
 ### Display Name Mapping
 
-Monitors are identified by EDID (stable across port/driver changes). `NameMappingConfiguration` maps EDID identifiers or display names to user-friendly names. `MonitorSwitchManager` (Core) applies these mappings when creating switch entities.
+Monitors are identified by EDID (stable across port/driver changes). `NameMappingConfiguration` maps EDID identifiers or display names to user-friendly names. `MonitorNameResolver` and `AudioNameResolver` (Core) apply these mappings. Every entity that names a device goes through them, so all entities agree on device names.
 
-### `DisplayConfigurationApi`
+### Profiles
 
-A special non-standard entity that accepts a JSON array payload on `display_config/command` to atomically switch an entire display preset in one MQTT message. This is the primary mechanism for couch gaming mode switches.
+`ProfileSelect` (Core/Profiles) is the primary mechanism for couch gaming switches. Each entry under `Profiles` in config names monitors, an audio output and refresh rates by their *mapped* names. Selecting one applies the monitor layout atomically via `IMonitorSwitcher.ApplyConfiguration`, then retries audio and refresh rate for up to 15s while the new display comes up. The select's state is derived from the active monitors rather than from the last command. When nothing matches it publishes `None`, which an HA MQTT select reads as "no option".
+
+The point of the design is that Home Assistant only knows profile names. Hardware identity lives in `NameMappings` and nowhere else, so swapping a monitor is a one-key config change.
 
 ## Configuration
 
@@ -97,7 +99,8 @@ module (see below). Key sections:
   "ProcessSwitches": [
     { "Name": "Steam", "Icon": "mdi:steam", "ExecutablePath": "...", "StartArguments": "...", "StopArguments": "..." }
   ],
-  "NameMappings": { "Monitors": { "EDID_ID": "Living Room TV" }, "AudioDevices": { "device_id": "TV Speakers" } }
+  "NameMappings": { "Monitors": { "EDID_ID": "TV" }, "AudioDevices": { "device_id": "TV Speakers" } },
+  "Profiles": { "Couch": { "Monitors": ["TV"], "Audio": "TV Speakers", "RefreshRates": { "TV": 120 } } }
 }
 ```
 

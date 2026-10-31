@@ -1,5 +1,6 @@
 using HADesktopAgent.Core.Mqtt;
 using HADesktopAgent.Core.Process;
+using HADesktopAgent.Core.Profiles;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -93,7 +94,8 @@ namespace HADesktopAgent.Core
                 Agent = new AgentConfiguration(),
                 Mqtt = new MqttConfiguration(),
                 ProcessSwitches = Array.Empty<ProcessSwitchConfiguration>(),
-                NameMappings = new NameMappingConfiguration()
+                NameMappings = new NameMappingConfiguration(),
+                Profiles = new Dictionary<string, ProfileConfiguration>()
             };
 
             var json = JsonSerializer.Serialize(defaultConfig, new JsonSerializerOptions { WriteIndented = true });
@@ -141,6 +143,12 @@ namespace HADesktopAgent.Core
 
             builder.Services.AddOptions<NameMappingConfiguration>()
                 .Bind(builder.Configuration.GetSection("NameMappings"));
+
+            builder.Services.AddOptions<Dictionary<string, ProfileConfiguration>>()
+                .Bind(builder.Configuration.GetSection("Profiles"))
+                .ValidateOnStart();
+
+            builder.Services.AddSingleton<IValidateOptions<Dictionary<string, ProfileConfiguration>>, ProfileConfigurationValidator>();
         }
     }
 }

@@ -132,6 +132,69 @@
               };
             };
           };
+
+          profileType = lib.types.submodule {
+            freeformType = jsonFormat.type;
+            options = {
+              Monitors = lib.mkOption {
+                type = lib.types.nonEmptyListOf lib.types.str;
+                description = ''
+                  Monitors to enable, by their {option}`NameMappings.Monitors` name. Every
+                  other monitor is disabled. The profile reads as active in Home Assistant
+                  whenever exactly these monitors are on.
+                '';
+              };
+
+              Audio = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = ''
+                  Audio output to make the default, by its {option}`NameMappings.AudioDevices`
+                  name. Null leaves audio alone.
+                '';
+              };
+
+              RefreshRates = lib.mkOption {
+                type = lib.types.attrsOf lib.types.ints.positive;
+                default = { };
+                example = { TV = 120; };
+                description = "Refresh rate in Hz per monitor, keyed by a name from {option}`Monitors`.";
+              };
+            };
+          };
+
+          # Names a profile uses that no mapping produces. Not an error — an unmapped
+          # device keeps its OS name, which a profile may use — but usually a typo or a
+          # mapping that went missing in a hardware swap.
+          mappedMonitors = lib.attrValues cfg.settings.NameMappings.Monitors;
+          mappedAudio = lib.attrValues cfg.settings.NameMappings.AudioDevices;
+          profileWarnings = lib.concatLists (lib.mapAttrsToList (name: profile:
+            map (monitor: ''
+              services.hadesktopagent.settings.Profiles."${name}" uses monitor "${monitor}",
+              which no NameMappings.Monitors entry maps to. It will only match a monitor the
+              OS itself reports under that name.
+            '') (lib.subtractLists mappedMonitors profile.Monitors)
+            ++ lib.optional (profile.Audio != null && !lib.elem profile.Audio mappedAudio) ''
+              services.hadesktopagent.settings.Profiles."${name}" uses audio output
+              "${profile.Audio}", which no NameMappings.AudioDevices entry maps to. It will
+              only match a device the OS itself reports under that name.
+            ''
+          ) cfg.settings.Profiles);
+
+          profileAssertions = lib.mapAttrsToList (name: profile: {
+            assertion = lib.all (m: lib.elem m profile.Monitors) (lib.attrNames profile.RefreshRates);
+            message = ''
+              services.hadesktopagent.settings.Profiles."${name}".RefreshRates names a monitor
+              that is not in its Monitors list.
+            '';
+          }) cfg.settings.Profiles
+          ++ [{
+            assertion = !(lib.any (n: lib.toLower n == "none") (lib.attrNames cfg.settings.Profiles));
+            message = ''
+              services.hadesktopagent.settings.Profiles cannot contain a profile named "None":
+              Home Assistant reads that select state as "no option selected".
+            '';
+          }];
         in
         {
           options.services.hadesktopagent = {
@@ -300,6 +363,24 @@
                     };
                   };
                 };
+
+                Profiles = lib.mkOption {
+                  type = lib.types.attrsOf profileType;
+                  default = { };
+                  example = lib.literalExpression ''
+                    {
+                      Desk  = { Monitors = [ "Desk" ]; Audio = "Speakers"; };
+                      Couch = { Monitors = [ "TV" ]; Audio = "TV Speakers"; RefreshRates.TV = 120; };
+                    }
+                  '';
+                  description = ''
+                    Named display/audio setups, exposed to Home Assistant as one
+                    `select.<device_id>_profile`. Selecting one enables exactly its monitors,
+                    then switches the audio output and refresh rates. Devices are referred to
+                    by their {option}`NameMappings` names, so replacing hardware only means
+                    updating a mapping.
+                  '';
+                };
               };
             };
           };
@@ -316,12 +397,12 @@
                   secret, or a file you place yourself with mode 0600).
                 '';
               }
-            ];
+            ] ++ profileAssertions;
 
             warnings = lib.optional (cfg.settings.Mqtt.Password != null) ''
               services.hadesktopagent.settings.Mqtt.Password writes the broker password into
               the world-readable Nix store. Use settings.Mqtt.PasswordFile instead.
-            '';
+            '' ++ profileWarnings;
 
             systemd.user.services.hadesktopagent = {
               Unit = {

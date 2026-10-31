@@ -14,7 +14,6 @@ namespace HADesktopAgent.Core.Mqtt
         private readonly string _appPrefix;
         private readonly List<IHaEntity> _entities = [];
         private readonly Dictionary<string, IHaCommandableEntity> _topicToCommandableEntities = [];
-        private readonly Dictionary<string, IMqttApi> _topicToApis = [];
 
         // Entities register/unregister on app threads while the on-connect bulk
         // publish and inbound message routing run on background threads.
@@ -73,40 +72,6 @@ namespace HADesktopAgent.Core.Mqtt
                 {
                     await PublishEntityState(statefulEntity);
                 }
-            }
-        }
-
-        public async Task RegisterApi(IMqttApi api)
-        {
-            var commandTopic = $"{_appPrefix}/{_deviceId}/{api.Name}/command";
-            lock (_collectionLock)
-            {
-                if (_topicToApis.ContainsKey(commandTopic))
-                {
-                    throw new InvalidOperationException($"API command topic '{commandTopic}' already subscribed to.");
-                }
-
-                _topicToApis[commandTopic] = api;
-            }
-
-            if (_mqttManager.IsConnected)
-            {
-                await SubscribeCommandTopic(commandTopic);
-            }
-        }
-
-        public async Task UnregisterApi(IMqttApi api)
-        {
-            var commandTopic = $"{_appPrefix}/{_deviceId}/{api.Name}/command";
-            bool removed;
-            lock (_collectionLock)
-            {
-                removed = _topicToApis.Remove(commandTopic);
-            }
-
-            if (removed && _mqttManager.IsConnected)
-            {
-                await _mqttManager.UnsubscribeAsync(commandTopic);
             }
         }
 
@@ -205,7 +170,7 @@ namespace HADesktopAgent.Core.Mqtt
             List<string> commandTopics;
             lock (_collectionLock)
             {
-                commandTopics = [.. _topicToCommandableEntities.Keys.Concat(_topicToApis.Keys)];
+                commandTopics = [.. _topicToCommandableEntities.Keys];
             }
 
             await Task.WhenAll(commandTopics.Select(commandTopic => SubscribeCommandTopic(commandTopic)));
@@ -282,23 +247,12 @@ namespace HADesktopAgent.Core.Mqtt
         private void HandleMqttMessage(string topic, string payload)
         {
             IHaCommandableEntity? commandableEntity;
-            IMqttApi? api = null;
             lock (_collectionLock)
             {
-                if (!_topicToCommandableEntities.TryGetValue(topic, out commandableEntity))
-                {
-                    _topicToApis.TryGetValue(topic, out api);
-                }
+                _topicToCommandableEntities.TryGetValue(topic, out commandableEntity);
             }
 
-            if (commandableEntity != null)
-            {
-                commandableEntity.HandleCommand(payload);
-            }
-            else if (api != null)
-            {
-                api.HandleCommand(payload);
-            }
+            commandableEntity?.HandleCommand(payload);
         }
 
         public async void Dispose()
@@ -308,12 +262,9 @@ namespace HADesktopAgent.Core.Mqtt
             try
             {
                 List<IHaEntity> entities;
-                List<string> apiTopics;
                 lock (_collectionLock)
                 {
                     entities = [.. _entities];
-                    apiTopics = [.. _topicToApis.Keys];
-                    _topicToApis.Clear();
                 }
 
                 foreach (var entity in entities)
@@ -328,11 +279,6 @@ namespace HADesktopAgent.Core.Mqtt
                     }
 
                     entity.ConfigUpdated -= HandleEntityConfigUpdated;
-                }
-
-                foreach (var topic in apiTopics)
-                {
-                    await Unsubscribe(topic);
                 }
             }
             catch (Exception e)

@@ -60,9 +60,6 @@ namespace HADesktopAgent.Core.Dev
                         case "list" or "ls":
                             List();
                             break;
-                        case "apis":
-                            Apis();
-                            break;
                         case "monitors" or "mon":
                             Monitors();
                             break;
@@ -95,11 +92,10 @@ namespace HADesktopAgent.Core.Dev
             Console.WriteLine();
             WriteColored(ConsoleColor.White, "HADesktopAgent dev console — no MQTT, entities are live\n");
             Console.WriteLine("  list                  entities, types and current state");
-            Console.WriteLine("  apis                  non-entity command APIs (e.g. display_config)");
             Console.WriteLine("  monitors              detected monitors, EDID ids and active set");
             Console.WriteLine("  audio                 detected audio sinks");
             Console.WriteLine("  config <entity>       the Home Assistant discovery JSON that would be published");
-            Console.WriteLine("  cmd <target> <payload>  send a command to an entity or api");
+            Console.WriteLine("  cmd <entity> <payload>  send a command to an entity");
             Console.WriteLine("  quit");
             Console.WriteLine();
             Console.WriteLine("  State changes print as they happen. Logs go to stderr — redirect with 2>/dev/null.");
@@ -132,23 +128,6 @@ namespace HADesktopAgent.Core.Dev
                         Console.WriteLine($"{"",-8} {"",-34}   - {option}");
                     }
                 }
-            }
-            Console.WriteLine();
-        }
-
-        private void Apis()
-        {
-            var apis = _host.Apis;
-            if (apis.Count == 0)
-            {
-                Console.WriteLine("(no apis registered)");
-                return;
-            }
-
-            Console.WriteLine();
-            foreach (var api in apis)
-            {
-                Console.WriteLine($"{api.Name}   <- {_host.AppPrefix}/{_host.DeviceId}/{api.Name}/command");
             }
             Console.WriteLine();
         }
@@ -209,22 +188,12 @@ namespace HADesktopAgent.Core.Dev
             var parts = rest.Split(' ', 2, StringSplitOptions.TrimEntries);
             if (parts.Length < 2 || parts[0].Length == 0)
             {
-                Error("usage: cmd <target> <payload>");
+                Error("usage: cmd <entity> <payload>");
                 return;
             }
 
             var target = parts[0];
             var payload = parts[1];
-
-            // APIs and entities share a namespace here; APIs are checked first since
-            // there are few of them and their names are distinctive.
-            var api = _host.Apis.FirstOrDefault(a => a.Name.Equals(target, StringComparison.OrdinalIgnoreCase));
-            if (api != null)
-            {
-                WriteColored(ConsoleColor.Blue, $"-> api {api.Name}: {payload}\n");
-                api.HandleCommand(payload);
-                return;
-            }
 
             if (!TryResolveEntity(target, out var entity))
             {

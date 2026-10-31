@@ -3,7 +3,7 @@ using HADesktopAgent.Core.Mqtt;
 namespace HADesktopAgent.Core.Entity
 {
     /// <summary>
-    /// Hosts entities and APIs built by <see cref="AgentEntityBuilder"/>.
+    /// Hosts entities built by <see cref="AgentEntityBuilder"/>.
     /// </summary>
     /// <remarks>
     /// Implemented by <see cref="MqttHaManager"/> for normal operation, and by
@@ -17,9 +17,5 @@ namespace HADesktopAgent.Core.Entity
         Task RegisterEntity(IHaEntity entity);
 
         Task UnregisterEntity(IHaEntity entity);
-
-        Task RegisterApi(IMqttApi api);
-
-        Task UnregisterApi(IMqttApi api);
     }
 }

@@ -13,7 +13,7 @@ namespace HADesktopAgent.Core.Display
         private readonly IMonitorSwitcher _monitorSwitcher;
         private readonly IHaEntityHost _entityHost;
         private readonly ILoggerFactory _loggerFactory;
-        private readonly Dictionary<string, string> _monitorNameMappings;
+        private readonly MonitorNameResolver _nameResolver;
         private readonly IRefreshRateController? _refreshRateController;
         private readonly Dictionary<string, MonitorSwitch> _switches = new();
         private readonly Dictionary<string, RefreshRateSelect> _refreshRateSelects = new();
@@ -26,15 +26,8 @@ namespace HADesktopAgent.Core.Display
         /// <summary>
         /// Maps mapped display names back to original hardware names for control operations.
         /// Key: mapped name (or original if no mapping), Value: original hardware name.
-        /// Exposed as a property so DisplayConfigurationApi can share the same live mapping.
         /// </summary>
         private readonly Dictionary<string, string> _mappedToOriginalNames = new();
-
-        /// <summary>
-        /// Gets the live mapping from display names (possibly mapped) to original hardware names.
-        /// This dictionary is kept in sync as monitors are added/removed.
-        /// </summary>
-        public IReadOnlyDictionary<string, string> MappedToOriginalNames => _mappedToOriginalNames;
 
         public MonitorSwitchManager(
             ILogger<MonitorSwitchManager> logger,
@@ -42,7 +35,7 @@ namespace HADesktopAgent.Core.Display
             IDisplayWatcher displayWatcher,
             IMonitorSwitcher monitorSwitcher,
             IHaEntityHost entityHost,
-            Dictionary<string, string>? monitorNameMappings = null,
+            MonitorNameResolver nameResolver,
             IRefreshRateController? refreshRateController = null)
         {
             _logger = logger;
@@ -50,7 +43,7 @@ namespace HADesktopAgent.Core.Display
             _displayWatcher = displayWatcher;
             _monitorSwitcher = monitorSwitcher;
             _entityHost = entityHost;
-            _monitorNameMappings = monitorNameMappings ?? new();
+            _nameResolver = nameResolver;
             _refreshRateController = refreshRateController;
 
             // Create switches for currently available monitors
@@ -64,53 +57,7 @@ namespace HADesktopAgent.Core.Display
             _displayWatcher.ActiveMonitorsUpdated += HandleActiveMonitorsUpdated;
         }
 
-        /// <summary>
-        /// Resolves the display name for a monitor by checking name mappings.
-        /// Tries matching by EDID identifier first (most specific with serial, then model-only),
-        /// then by original display name, falls back to the original name if no mapping exists.
-        /// </summary>
-        private string ResolveMappedName(string originalName)
-        {
-            var details = _displayWatcher.MonitorDetails;
-
-            if (details.TryGetValue(originalName, out var monitorInfo) && monitorInfo.EdidIdentifier != null)
-            {
-                // Try exact EDID identifier match (e.g., "SAM-7796-HNTXA00720")
-                if (_monitorNameMappings.TryGetValue(monitorInfo.EdidIdentifier, out var mappedByFullId))
-                {
-                    _logger.LogInformation(
-                        "Monitor '{OriginalName}' mapped to '{MappedName}' via EDID identifier '{EdidId}'",
-                        originalName, mappedByFullId, monitorInfo.EdidIdentifier);
-                    return mappedByFullId;
-                }
-
-                // Try model-only EDID identifier match (e.g., "SAM-7796" from "SAM-7796-HNTXA00720")
-                var dashCount = monitorInfo.EdidIdentifier.Count(c => c == '-');
-                if (dashCount >= 2)
-                {
-                    var secondDash = monitorInfo.EdidIdentifier.IndexOf('-', monitorInfo.EdidIdentifier.IndexOf('-') + 1);
-                    var modelOnlyId = monitorInfo.EdidIdentifier[..secondDash];
-                    if (_monitorNameMappings.TryGetValue(modelOnlyId, out var mappedByModelId))
-                    {
-                        _logger.LogInformation(
-                            "Monitor '{OriginalName}' mapped to '{MappedName}' via model EDID identifier '{EdidId}'",
-                            originalName, mappedByModelId, modelOnlyId);
-                        return mappedByModelId;
-                    }
-                }
-            }
-
-            // Try matching by display name
-            if (_monitorNameMappings.TryGetValue(originalName, out var mappedByName))
-            {
-                _logger.LogInformation(
-                    "Monitor '{OriginalName}' mapped to '{MappedName}' via display name",
-                    originalName, mappedByName);
-                return mappedByName;
-            }
-
-            return originalName;
-        }
+        private string ResolveMappedName(string originalName) => _nameResolver.Resolve(originalName);
 
         private void CreateSwitch(string originalMonitorName, string displayName)
         {

@@ -22,7 +22,7 @@ namespace HADesktopAgent.Core.Audio.Entity
 
         private readonly IAudioManager _audioManager;
         private readonly ILogger<AudioSelect> _logger;
-        private readonly Dictionary<string, string> _audioNameMappings;
+        private readonly AudioNameResolver _nameResolver;
 
         private readonly object _updateLock = new();
 
@@ -32,11 +32,11 @@ namespace HADesktopAgent.Core.Audio.Entity
         public event IHaStatefulEntity.StateUpdatedHandler? StateUpdated;
         public event IHaEntity.ConfigUpdatedHandler? ConfigUpdated;
 
-        public AudioSelect(ILogger<AudioSelect> logger, IAudioManager audioManager, Dictionary<string, string>? audioNameMappings = null)
+        public AudioSelect(ILogger<AudioSelect> logger, IAudioManager audioManager, AudioNameResolver nameResolver)
         {
             _logger = logger;
             _audioManager = audioManager;
-            _audioNameMappings = audioNameMappings ?? new();
+            _nameResolver = nameResolver;
             UpdateAudioDevices();
 
             _audioManager.DeviceChanged += AudioDevicesChanged;
@@ -58,27 +58,7 @@ namespace HADesktopAgent.Core.Audio.Entity
             _audioManager.SetActiveDevice(audioDevice.Id);
         }
 
-        /// <summary>
-        /// Gets the display name for an audio device, applying name mappings if configured.
-        /// Checks the device's UserFriendlyName, FriendlyName, and DeviceName against the mapping keys.
-        /// </summary>
-        private string GetDisplayName(AudioDevice device)
-        {
-            // Try matching by UserFriendlyName
-            if (_audioNameMappings.TryGetValue(device.UserFriendlyName, out var mappedByUserFriendly))
-                return mappedByUserFriendly;
-
-            // Try matching by FriendlyName
-            if (_audioNameMappings.TryGetValue(device.FriendlyName, out var mappedByFriendly))
-                return mappedByFriendly;
-
-            // Try matching by DeviceName
-            if (_audioNameMappings.TryGetValue(device.DeviceName, out var mappedByDevice))
-                return mappedByDevice;
-
-            // No mapping found, use original name
-            return device.UserFriendlyName;
-        }
+        private string GetDisplayName(AudioDevice device) => _nameResolver.Resolve(device);
 
         private void UpdateAudioDevices()
         {

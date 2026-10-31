@@ -5,7 +5,7 @@ A cross-platform desktop agent that integrates with [Home Assistant](https://www
 ## Features
 
 - **Display Switches** — Individual on/off switches for each connected monitor. Monitors are discovered dynamically — hot-plugging a display creates a new switch in Home Assistant automatically.
-- **Display Configuration** — An MQTT command topic that accepts a JSON list of monitor names to enable, disabling everything else in a single atomic operation. Useful for switching display presets without toggling monitors one at a time.
+- **Profiles** — Named setups (e.g. "Desk", "Couch") defined in config and exposed as one select entity. Selecting a profile enables exactly its monitors, then sets its audio output and refresh rates. Home Assistant never needs to know which hardware is involved.
 - **Audio Device Select** — A select entity listing all available audio output devices. Changing the selection switches the system default audio output.
 - **Process Switches** — User-configurable switches that launch and stop applications. Define them in `config.json` with a path, optional arguments, and an icon.
 - **Sleep Button** — A button entity that triggers system sleep/suspend.
@@ -53,12 +53,17 @@ On first run the agent creates a default config file:
   ],
   "NameMappings": {
     "Monitors": {
-      "SAM-7796-HNTXA00720": "Gaming Monitor",
-      "GSM-83CD": "Living Room TV"
+      "SAM-7796-HNTXA00720": "Desk",
+      "GSM-83CD": "TV"
     },
     "AudioDevices": {
+      "Built-in Audio Analog Stereo": "Speakers",
       "Built-in Audio Digital Stereo (HDMI)": "TV Speakers"
     }
+  },
+  "Profiles": {
+    "Desk": { "Monitors": ["Desk"], "Audio": "Speakers" },
+    "Couch": { "Monitors": ["TV"], "Audio": "TV Speakers", "RefreshRates": { "TV": 120 } }
   }
 }
 ```
@@ -80,6 +85,9 @@ On first run the agent creates a default config file:
 | `ProcessSwitches` | `StopArgument` | Optional CLI args for graceful stop (omit to kill process) |
 | `NameMappings` | `Monitors` | Map of identifier → custom name for monitors (see [Name Mappings](#name-mappings)) |
 | `NameMappings` | `AudioDevices` | Map of device name → custom name for audio devices (see [Name Mappings](#name-mappings)) |
+| `Profiles` | `<name>.Monitors` | Monitors to enable, by mapped name; all others are disabled (see [Profiles](#profiles)) |
+| `Profiles` | `<name>.Audio` | Optional audio output to make the default, by mapped name |
+| `Profiles` | `<name>.RefreshRates` | Optional map of monitor name → refresh rate in Hz |
 
 ### Config File Location
 
@@ -250,18 +258,42 @@ The agent uses [MQTT Discovery](https://www.home-assistant.io/integrations/mqtt/
 2. The agent's `Mqtt.Host` points to the same broker
 3. The `Mqtt.DiscoveryPrefix` matches Home Assistant's discovery prefix (both default to `homeassistant`)
 
-## Display Configuration
+## Profiles
 
-In addition to the per-monitor switches, the agent listens on `ha_desktop_agent/{device_id}/display_config/command` for an atomic display configuration payload. Publish a JSON array of monitor names to enable — all unlisted monitors are disabled in one shot. If name mappings are configured, use the mapped names in the payload.
+A profile is a named setup: which monitors are on, which audio output is the default, and
+optionally the refresh rate of each monitor. Profiles appear in Home Assistant as a single
+`select.<device_id>_profile` whose options are the profile names.
+
+Profiles refer to devices by their [mapped names](#name-mappings), so the mapping is the
+only place that knows about specific hardware. Map monitors by *role* ("Desk", "TV")
+rather than model. When you replace a monitor, change the one mapping key to the new
+EDID identifier and nothing else, in the agent or in Home Assistant, has to change.
+
+Selecting a profile:
+
+1. Enables exactly its connected monitors and disables every other one. Monitors that
+   aren't connected are skipped with a warning. If none are connected, the profile isn't
+   applied.
+2. Switches the audio output and refresh rates. Both are retried for up to 15 seconds,
+   because a newly enabled display takes a moment to report its modes and its HDMI audio
+   sink only appears once the display is up.
+
+The select's state is the profile whose monitors are exactly the active ones, so it stays
+correct when displays are changed by hand. If no profile matches, the state is cleared.
+When several profiles share the same monitors, the one whose audio output is active wins.
 
 ```yaml
-# Example: HA script to switch to a single gaming monitor
-# (uses the mapped name from NameMappings config)
-script:
-  gaming_mode:
-    sequence:
-      - service: mqtt.publish
+# Example: Home Assistant automation driving profiles from the TV's power state
+automation:
+  - alias: Couch gaming
+    triggers:
+      - trigger: state
+        entity_id: media_player.living_room_tv
+        to: "on"
+    actions:
+      - action: select.select_option
+        target:
+          entity_id: select.ha_agent_profile
         data:
-          topic: ha_desktop_agent/my_desktop/display_config/command
-          payload: '["Gaming Monitor"]'
+          option: Couch
 ```

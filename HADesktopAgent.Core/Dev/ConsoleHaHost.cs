@@ -1,5 +1,4 @@
 using HADesktopAgent.Core.Entity;
-using HADesktopAgent.Core.Mqtt;
 
 namespace HADesktopAgent.Core.Dev
 {
@@ -17,7 +16,6 @@ namespace HADesktopAgent.Core.Dev
         private readonly string _haPrefix;
 
         private readonly List<IHaEntity> _entities = [];
-        private readonly List<IMqttApi> _apis = [];
 
         // State updates arrive on display-watcher and pactl-subscribe threads while the
         // REPL reads on the main thread; guards the collections and console writes.
@@ -38,11 +36,6 @@ namespace HADesktopAgent.Core.Dev
         public IReadOnlyList<IHaEntity> Entities
         {
             get { lock (_lock) { return [.. _entities]; } }
-        }
-
-        public IReadOnlyList<IMqttApi> Apis
-        {
-            get { lock (_lock) { return [.. _apis]; } }
         }
 
         public string HaPrefix => _haPrefix;
@@ -102,28 +95,6 @@ namespace HADesktopAgent.Core.Dev
             entity.ConfigUpdated -= HandleConfigUpdated;
 
             Report(ConsoleColor.Red, "- unregistered", Describe(entity));
-            return Task.CompletedTask;
-        }
-
-        public Task RegisterApi(IMqttApi api)
-        {
-            lock (_lock)
-            {
-                _apis.Add(api);
-            }
-
-            Report(ConsoleColor.Green, "+ registered", $"api {api.Name}  <- {_appPrefix}/{_deviceId}/{api.Name}/command");
-            return Task.CompletedTask;
-        }
-
-        public Task UnregisterApi(IMqttApi api)
-        {
-            lock (_lock)
-            {
-                _apis.Remove(api);
-            }
-
-            Report(ConsoleColor.Red, "- unregistered", $"api {api.Name}");
             return Task.CompletedTask;
         }
 

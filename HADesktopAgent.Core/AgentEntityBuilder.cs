@@ -5,6 +5,7 @@ using HADesktopAgent.Core.Display.Entity;
 using HADesktopAgent.Core.Entity;
 using HADesktopAgent.Core.Process;
 using HADesktopAgent.Core.Process.Entity;
+using HADesktopAgent.Core.Profiles;
 using HADesktopAgent.Core.Sleep;
 using HADesktopAgent.Core.Sleep.Entity;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,7 +21,7 @@ namespace HADesktopAgent.Core
     public sealed class AgentEntities : IDisposable
     {
         public required MonitorSwitchManager MonitorSwitchManager { get; init; }
-        public required DisplayConfigurationApi DisplayConfigApi { get; init; }
+        public required ProfileSelect? ProfileSelect { get; init; }
         public required AudioSelect AudioSelect { get; init; }
         public required SleepButton SleepButton { get; init; }
         public required IReadOnlyList<ProcessSwitch> ProcessSwitches { get; init; }
@@ -29,6 +30,7 @@ namespace HADesktopAgent.Core
         {
             // MonitorSwitchManager disposes the per-monitor entities it created.
             MonitorSwitchManager.Dispose();
+            ProfileSelect?.Dispose();
             AudioSelect.Dispose();
         }
     }
@@ -55,6 +57,7 @@ namespace HADesktopAgent.Core
             var sleepControl = services.GetRequiredService<ISleepControl>();
             var processSwitchConfig = services.GetRequiredService<IOptions<List<ProcessSwitchConfiguration>>>();
             var nameMappingConfig = services.GetRequiredService<IOptions<NameMappingConfiguration>>().Value;
+            var profileConfig = services.GetRequiredService<IOptions<Dictionary<string, ProfileConfiguration>>>().Value;
 
             // Optional: only platforms that implement refresh rate control register this.
             var refreshRateController = services.GetService<IRefreshRateController>();
@@ -65,6 +68,9 @@ namespace HADesktopAgent.Core
                 logger.LogInformation("Discovered monitor: '{Name}' (EDID: {EdidId})", name, info.EdidIdentifier ?? "unavailable");
             }
 
+            var monitorNames = new MonitorNameResolver(displayWatcher, nameMappingConfig.Monitors);
+            var audioNames = new AudioNameResolver(nameMappingConfig.AudioDevices);
+
             // Per-monitor switch entities (with name mappings). Registers its own
             // entities as monitors appear and disappear.
             var monitorSwitchManager = new MonitorSwitchManager(
@@ -73,20 +79,29 @@ namespace HADesktopAgent.Core
                 displayWatcher,
                 monitorSwitcher,
                 host,
-                nameMappingConfig.Monitors,
+                monitorNames,
                 refreshRateController);
 
-            // Display configuration API (shares the live mapped-name dictionary from the monitor switch manager)
-            var displayConfigApi = new DisplayConfigurationApi(
-                loggerFactory.CreateLogger<DisplayConfigurationApi>(),
-                displayWatcher,
-                monitorSwitcher,
-                monitorSwitchManager.MappedToOriginalNames);
-            await host.RegisterApi(displayConfigApi);
-
             // Audio select entity (with name mappings)
-            var audioSelect = new AudioSelect(loggerFactory.CreateLogger<AudioSelect>(), audioManager, nameMappingConfig.AudioDevices);
+            var audioSelect = new AudioSelect(loggerFactory.CreateLogger<AudioSelect>(), audioManager, audioNames);
             await host.RegisterEntity(audioSelect);
+
+            // Profile select: only registered when profiles are configured, since a
+            // select with no options is useless in HA.
+            ProfileSelect? profileSelect = null;
+            if (profileConfig.Count > 0)
+            {
+                profileSelect = new ProfileSelect(
+                    loggerFactory.CreateLogger<ProfileSelect>(),
+                    profileConfig,
+                    displayWatcher,
+                    monitorSwitcher,
+                    monitorNames,
+                    audioManager,
+                    audioNames,
+                    refreshRateController);
+                await host.RegisterEntity(profileSelect);
+            }
 
             // Process switch entities
             var processSwitches = new List<ProcessSwitch>();
@@ -110,7 +125,7 @@ namespace HADesktopAgent.Core
             return new AgentEntities
             {
                 MonitorSwitchManager = monitorSwitchManager,
-                DisplayConfigApi = displayConfigApi,
+                ProfileSelect = profileSelect,
                 AudioSelect = audioSelect,
                 SleepButton = sleepButton,
                 ProcessSwitches = processSwitches,
